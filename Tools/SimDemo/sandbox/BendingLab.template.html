@@ -155,7 +155,7 @@
     </div>
     <div class="proof" aria-label="Verification">
       <span class="chip wait" id="kernel-chip"><span class="dot"></span><span id="kernel-status">Loading kernel</span></span>
-      <span class="chip"><span class="dot"></span>88 checks passing</span>
+      <span class="chip"><span class="dot"></span>191 checks passing</span>
       <span class="chip"><span class="dot"></span>Bit-identical to native</span>
     </div>
   </header>
@@ -216,7 +216,7 @@
           <dt>Heat added or extracted</dt><dd id="w-thermal">0 J</dd>
           <dt>Kinetic energy given</dt><dd id="w-kinetic">0 J</dd>
         </dl>
-        <p class="summary">Priced at the plugin defaults: 100 kJ of heat or 5 kJ of motion per point of chi.</p>
+        <p class="summary">Priced at the plugin defaults: 250 kJ of heat or 5 kJ of motion per point of chi.</p>
       </div>
       <div class="card">
         <h2>Ground traction</h2>
@@ -738,10 +738,10 @@ arena.addEventListener("pointerdown", e => {
     const x = wx(p.x), z = wz(p.y);
     if (state.tool === "freeze") {
       const j = bs.bs_freeze_near(x, z, 200);
-      showHint(j > 0 ? `<strong>Froze it.</strong> Extracted ${fmtEnergy(j)} (${(j / 100000).toFixed(1)} chi).` : "No liquid water within 2 m of that point.", 4000);
+      showHint(j > 0 ? `<strong>Froze it.</strong> Extracted ${fmtEnergy(j)} (${(j / 250000).toFixed(1)} chi).` : "No liquid water within 2 m of that point.", 4000);
     } else {
       const j = bs.bs_heat_near(x, z, 200, 500000);
-      showHint(j > 0 ? `<strong>Poured in ${fmtEnergy(j)}</strong> (${(j / 100000).toFixed(1)} chi).` : "Nothing within 2 m to heat (or the flame is already at 2300 K).", 4000);
+      showHint(j > 0 ? `<strong>Poured in ${fmtEnergy(j)}</strong> (${(j / 250000).toFixed(1)} chi).` : "Nothing within 2 m to heat (or the flame is already at 2300 K).", 4000);
     }
     state.volumes = readVolumes();
     return;
@@ -805,7 +805,7 @@ function updateDom(force) {
   const thermal = bs.bs_bender_thermal_work(), kinetic = bs.bs_bender_kinetic_work();
   document.getElementById("w-thermal").textContent = fmtEnergy(thermal);
   document.getElementById("w-kinetic").textContent = fmtEnergy(kinetic);
-  document.getElementById("chi").textContent = `${(thermal / 100000 + kinetic / 5000).toFixed(1)} chi`;
+  document.getElementById("chi").textContent = `${(thermal / 250000 + kinetic / 5000).toFixed(1)} chi`;
 
   let tx = 0, where = "At arena centre";
   if (state.pointer) { tx = wx(state.pointer.x); where = `Under cursor (${(tx / 100).toFixed(1)} m)`; }

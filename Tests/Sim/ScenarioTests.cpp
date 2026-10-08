@@ -373,7 +373,7 @@ namespace
 		const FVolume* Whip = ActorVolume("Water whip");
 		using namespace Thermo::Constants;
 		const double Expected = 12.0 * (SpecificHeatWater * (288.15 - WaterFreezingPointK) + LatentHeatFusion);
-		std::printf("    freezing 12 kg cost %.2f MJ = %.1f chi at %.0f J/chi\n", GDemo.BenderThermalWorkJ / 1e6, GDemo.BenderThermalWorkJ / 100000.0, 100000.0);
+		std::printf("    freezing 12 kg cost %.2f MJ = %.1f chi at %.0f J/chi\n", GDemo.BenderThermalWorkJ / 1e6, GDemo.BenderThermalWorkJ / 250000.0, 250000.0);
 		ExpectTrue("the whip is ice", Whip && Whip->Substance == ESubstance::Ice);
 		ExpectTrue("a Freezing event fired", Log.Num(EReactionType::Freezing) == 1);
 		ExpectNear("bender paid m*(c*dT + L_f) (J)", GDemo.BenderThermalWorkJ, Expected, 1e-3 * Expected);
@@ -413,7 +413,7 @@ namespace
 		const double Evaporated = Log.Mass(EReactionType::Evaporation);
 		std::printf("    traction %.2f -> %.2f (back above 0.95 at t=%.1f s) | %.1f kg boiled off | bender paid %.1f MJ = %.0f chi | flame peak %.0f K\n",
 			TractionBefore, GDemo.World.GetSurfaceTractionMultiplierAt(FVec3()), RecoveredAt, Evaporated, GDemo.BenderThermalWorkJ / 1e6,
-			GDemo.BenderThermalWorkJ / 100000.0, MaxFlameT);
+			GDemo.BenderThermalWorkJ / 250000.0, MaxFlameT);
 		ExpectTrue("mud starts slippery (traction < 0.5)", TractionBefore < 0.5);
 		ExpectTrue("traction fully recovers", GDemo.World.GetSurfaceTractionMultiplierAt(FVec3()) > 0.99);
 		ExpectTrue("the water left as steam (> 15 kg)", Evaporated > 15.0);

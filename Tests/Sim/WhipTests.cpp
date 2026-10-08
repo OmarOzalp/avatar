@@ -194,7 +194,7 @@ namespace
 		const double Expected = 20.0 * (4186.0 * 15.0 + 334000.0);
 		const double Moved = Whip.TransferHeat(GWorld, -Need);
 		Frame(Whip, Hand, FVec3(), FVec3(800.0, 0.0, 140.0));
-		std::printf("    freezing 20 kg took %.2f MJ = %.1f chi at 100 kJ/chi\n", -Moved / 1e6, -Moved / 1e5);
+		std::printf("    freezing 20 kg took %.2f MJ = %.1f chi at 250 kJ/chi\n", -Moved / 1e6, -Moved / 2.5e5);
 		ExpectNear("heat to freeze = m (c dT + L_f) (MJ)", Need / 1e6, Expected / 1e6, 0.01);
 		ExpectNear("all of it was extracted (MJ)", -Moved / 1e6, Need / 1e6, 1e-9);
 		ExpectTrue("the whip is ice", Whip.IsFrozen(GWorld));
