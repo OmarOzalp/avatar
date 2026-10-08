@@ -13,7 +13,7 @@ namespace BendingSim
 	class FSimWorld;
 
 	/** Everything a reaction may read or change for one pair during one step. A and B match the entry's substances. */
-	struct FReactionContext
+	struct BENDINGSIM_API FReactionContext
 	{
 		FSimWorld& World;
 		FVolume& A;
@@ -60,7 +60,7 @@ namespace BendingSim
 	 * (spawned as a free volume); ice banks latent heat until it melts; inelastic momentum coupling drags the
 	 * pair toward a common velocity (water smothers a fire jet).
 	 */
-	void ReactHeatExchange(const FHeatExchangeParams& Params, FReactionContext& Context);
+	BENDINGSIM_API void ReactHeatExchange(const FHeatExchangeParams& Params, FReactionContext& Context);
 
 	// ---------------------------------------------------------------- Oxygenation: Air (A) + Fire (B)
 
@@ -80,7 +80,7 @@ namespace BendingSim
 	 * 3.03 MJ/kg of air * efficiency, capped by the fuel limit and the adiabatic flame temperature. The flame gets
 	 * hotter and heavier, expands by the ideal-gas law, and rides the air's momentum.
 	 */
-	void ReactOxygenation(const FOxygenationParams& Params, FReactionContext& Context);
+	BENDINGSIM_API void ReactOxygenation(const FOxygenationParams& Params, FReactionContext& Context);
 
 	// ---------------------------------------------------------------- Saturation: Water (A) + Earth (B)
 
@@ -98,7 +98,7 @@ namespace BendingSim
 	};
 
 	/** Inelastic splash shoves the earth; porous earth absorbs water into its pore volume and turns to mud. */
-	void ReactSaturation(const FSaturationParams& Params, FReactionContext& Context);
+	BENDINGSIM_API void ReactSaturation(const FSaturationParams& Params, FReactionContext& Context);
 
 	// ---------------------------------------------------------------- Aerodynamic drag: Air (A) + anything (B)
 
@@ -122,7 +122,7 @@ namespace BendingSim
 	 * at a full inelastic merge, so drag can never push a body past the wind or create energy. Loose, dry earth
 	 * erodes above a critical dynamic pressure. The air loses exactly the momentum the body gains.
 	 */
-	void ReactAeroDrag(const FAeroDragParams& Params, FReactionContext& Context);
+	BENDINGSIM_API void ReactAeroDrag(const FAeroDragParams& Params, FReactionContext& Context);
 
 	// ---------------------------------------------------------------- Built-in rule set
 
@@ -138,10 +138,10 @@ namespace BendingSim
 	 * Registers the standard rules: Fire+Water, Fire+Ice, Steam+Ice, Fire+Earth heat exchange; Air+Fire oxygenation;
 	 * Water+Earth saturation; Air+Earth/Water/Ice/Steam drag. Params must outlive the world's use of them.
 	 */
-	void AddBuiltInReactions(FSimWorld& World, const FDefaultReactionParams& Params);
+	BENDINGSIM_API void AddBuiltInReactions(FSimWorld& World, const FDefaultReactionParams& Params);
 
-	void HeatExchangeReactionFunction(const void* UserData, FReactionContext& Context);
-	void OxygenationReactionFunction(const void* UserData, FReactionContext& Context);
-	void SaturationReactionFunction(const void* UserData, FReactionContext& Context);
-	void AeroDragReactionFunction(const void* UserData, FReactionContext& Context);
+	BENDINGSIM_API void HeatExchangeReactionFunction(const void* UserData, FReactionContext& Context);
+	BENDINGSIM_API void OxygenationReactionFunction(const void* UserData, FReactionContext& Context);
+	BENDINGSIM_API void SaturationReactionFunction(const void* UserData, FReactionContext& Context);
+	BENDINGSIM_API void AeroDragReactionFunction(const void* UserData, FReactionContext& Context);
 }

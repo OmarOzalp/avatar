@@ -12,6 +12,13 @@
 #include <cmath>
 #endif
 
+// Exported from the Bending module in engine builds, so other modules can call the kernel; empty stand-alone.
+#if defined(BENDING_API)
+#define BENDINGSIM_API BENDING_API
+#else
+#define BENDINGSIM_API
+#endif
+
 namespace BendingSim
 {
 	// ---------------------------------------------------------------- Scalars

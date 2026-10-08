@@ -22,6 +22,7 @@ public:
 	UElementalReaction_AeroDrag();
 
 	virtual void React(BendingSim::FReactionContext& Context) const override;
+	virtual EElementalSubstance GetRequiredSubstanceA() const override { return EElementalSubstance::Air; }
 
 	/** Earth with at least this porosity is loose enough to erode (sand, soil; not rock). */
 	UPROPERTY(EditAnywhere, Category = "Erosion", meta = (ClampMin = 0.0, ClampMax = 1.0))

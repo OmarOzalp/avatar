@@ -175,7 +175,7 @@ void UElementalVolumeComponent::PreSimulationSync(BendingSim::FVolume& Volume, d
 }
 
 void UElementalVolumeComponent::PostSimulationSync(const BendingSim::FVolume& Volume, const FVector& FrameImpulseKgCmS,
-	EElementalSubstance PreviousSubstance, bool bNewlyDepleted)
+	EElementalSubstance PreviousSubstance, bool bDepleted, bool bNewlyDepleted)
 {
 	UPrimitiveComponent* Body = GetSimulatingParent();
 
@@ -188,7 +188,8 @@ void UElementalVolumeComponent::PostSimulationSync(const BendingSim::FVolume& Vo
 		OnImpulseReceived.Broadcast(FrameImpulseKgCmS);
 	}
 
-	if (bSyncMassWithAttachedBody && Body && Volume.MassKg > 0.0)
+	// A depleted volume's leftover mass (grams) would destabilize a body that still has its full size.
+	if (bSyncMassWithAttachedBody && Body && !bDepleted && Volume.MassKg > 0.0)
 	{
 		const double BodyMassKg = Body->GetMass();
 		if (FMath::Abs(BodyMassKg - Volume.MassKg) > 0.005 * Volume.MassKg)

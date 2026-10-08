@@ -129,6 +129,10 @@ the editor (see **Verification** below), and it is the same code that runs in th
 - Results are deterministic: same inputs, same bits. Floating-point contraction is disabled in the stand-alone builds.
 - Custom rules: subclass `UElementalReaction`, override `React(BendingSim::FReactionContext&)`, and add it to a
   `UElementalReactionSet`. The context exposes both volumes, the contact, `EmitEvent` and `SpawnFreeVolume`.
+  A rule whose physics is not symmetric overrides `GetRequiredSubstanceA` (drag and oxygenation need Air as A,
+  saturation needs Water), and registration puts the pair in that order whichever way it was authored.
+- Kernel functions and types are exported from the Bending module (`BENDINGSIM_API`), so the game module and
+  other plugins can call them directly.
 
 ### Volumes
 `BendingSim::FVolume` (mirrored for Blueprint as `FElementalVolumeState`) holds substance (Earth, Water, Ice, Steam, Fire, Air), mass, temperature, banked latent heat, porosity and saturation (earth), drag coefficient, shape (sphere or capsule), location, and velocity.

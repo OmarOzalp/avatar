@@ -67,7 +67,7 @@ namespace BendingSim
 	 * Fixed capacity, no allocation, no standard library: the same object runs inside Unreal, in native tests and
 	 * in WebAssembly. Engine adapters sync owners before Advance and read FOwnerUpdate / events after.
 	 */
-	class FSimWorld
+	class BENDINGSIM_API FSimWorld
 	{
 	public:
 		static constexpr int MaxVolumes = 1024;
@@ -77,6 +77,8 @@ namespace BendingSim
 		static constexpr int MaxPendingEvents = 256;
 		static constexpr int MaxDiscreteEvents = 128;
 		static constexpr int MaxNotices = 256;
+		/** Most events one FlushEvents call can return. */
+		static constexpr int MaxFlushedEvents = MaxPendingEvents + MaxDiscreteEvents;
 
 		FSimSettings Settings;
 

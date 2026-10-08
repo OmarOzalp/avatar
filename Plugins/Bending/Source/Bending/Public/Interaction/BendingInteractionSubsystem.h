@@ -84,8 +84,9 @@ public:
 	/** Volumes whose shape comes within RadiusCm of CenterCm, filtered by ElementalSubstance::ToMask bits. */
 	void QueryVolumes(const FVector& CenterCm, double RadiusCm, uint32 SubstanceMask, TArray<FElementalVolumeHandle>& OutHandles) const;
 
-	/** Native access to the kernel world, for tools and tests. */
-	[[nodiscard]] BendingSim::FSimWorld& GetSimWorld() const { return *SimWorld; }
+	/** Native access to the kernel world, for tools and tests. Null outside Initialize..Deinitialize. */
+	[[nodiscard]] BendingSim::FSimWorld* GetSimWorld() { return SimWorld.Get(); }
+	[[nodiscard]] const BendingSim::FSimWorld* GetSimWorld() const { return SimWorld.Get(); }
 
 	// ---------------------------------------------------------------- Bender commands
 
@@ -139,6 +140,8 @@ public:
 private:
 	void ApplySettings();
 	void RegisterBuiltInReactions();
+	/** Re-registers every rule from ReactionSet, or the built-in set when there is none. */
+	void RebuildReactions();
 	void SyncFromOwners(double FrameSeconds);
 	void SyncToOwners();
 	void BroadcastEvents(double FrameSeconds);
@@ -152,7 +155,13 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UElementalReactionSet> ReactionSet;
 
-	/** Keeps reaction objects alive; the kernel holds raw pointers to them. */
+	/**
+	 * Keeps reaction objects alive; the kernel holds raw pointers to them. If one is destroyed anyway (asset
+	 * force-deleted or reloaded during PIE), GC nulls its entry here and the next Tick rebuilds before stepping.
+	 */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UElementalReaction>> Reactions;
+
+	/** Reused every frame for FlushEvents. */
+	TArray<BendingSim::FReactionEvent> EventScratch;
 };

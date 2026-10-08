@@ -36,10 +36,13 @@ enum class EElementalReactionType : uint8
 	/** Wind stripped loose material off earth. Mass = material removed. */
 	Erosion,
 	/** A flame dropped below its sustain temperature. */
-	Extinguished
+	Extinguished,
+
+	Count UMETA(Hidden)
 };
 
-static_assert(static_cast<int>(EElementalReactionType::Extinguished) == static_cast<int>(BendingSim::EReactionType::Extinguished),
+static_assert(static_cast<int>(EElementalReactionType::Extinguished) == static_cast<int>(BendingSim::EReactionType::Extinguished)
+	&& static_cast<int>(EElementalReactionType::Count) == static_cast<int>(BendingSim::EReactionType::Count),
 	"Reaction type mirror out of sync with BendingSim::EReactionType");
 static_assert(static_cast<int>(EElementalVolumeShape::Capsule) == static_cast<int>(BendingSim::EShape::Capsule),
 	"Shape mirror out of sync with BendingSim::EShape");

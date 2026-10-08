@@ -20,6 +20,7 @@ public:
 	UElementalReaction_Oxygenation();
 
 	virtual void React(BendingSim::FReactionContext& Context) const override;
+	virtual EElementalSubstance GetRequiredSubstanceA() const override { return EElementalSubstance::Air; }
 
 	/** Share of the combustion heat kept by the flame; luminous flames radiate away ~30-40%. */
 	UPROPERTY(EditAnywhere, Category = "Combustion", meta = (ClampMin = 0.0, ClampMax = 1.0))

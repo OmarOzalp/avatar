@@ -100,7 +100,8 @@ public:
 
 	//~ Called by UBendingInteractionSubsystem
 	void PreSimulationSync(BendingSim::FVolume& Volume, double FrameSeconds);
-	void PostSimulationSync(const BendingSim::FVolume& Volume, const FVector& FrameImpulseKgCmS, EElementalSubstance PreviousSubstance, bool bNewlyDepleted);
+	void PostSimulationSync(const BendingSim::FVolume& Volume, const FVector& FrameImpulseKgCmS, EElementalSubstance PreviousSubstance,
+		bool bDepleted, bool bNewlyDepleted);
 
 	//~ UActorComponent
 	virtual void Activate(bool bReset = false) override;

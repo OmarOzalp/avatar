@@ -37,8 +37,6 @@ namespace
 		default:                            return FColor::Magenta;
 		}
 	}
-
-	constexpr int32 MaxEventsPerFrame = 512;
 }
 
 // ---------------------------------------------------------------------------------------------------- Lifecycle
@@ -59,22 +57,18 @@ void UBendingInteractionSubsystem::Initialize(FSubsystemCollectionBase& Collecti
 
 	SimWorld = MakeUnique<BendingSim::FSimWorld>();
 	OwnerBySlot.SetNum(BendingSim::FSimWorld::MaxVolumes);
+	EventScratch.SetNum(BendingSim::FSimWorld::MaxFlushedEvents);
 	ApplySettings();
 
-	if (UElementalReactionSet* ConfiguredSet = UBendingSettings::Get().ReactionSet.LoadSynchronous())
-	{
-		SetReactionSet(ConfiguredSet);
-	}
-	else
-	{
-		RegisterBuiltInReactions();
-	}
+	ReactionSet = UBendingSettings::Get().ReactionSet.LoadSynchronous();
+	RebuildReactions();
 }
 
 void UBendingInteractionSubsystem::Deinitialize()
 {
 	SimWorld.Reset();
 	OwnerBySlot.Empty();
+	EventScratch.Empty();
 	Reactions.Empty();
 	ReactionSet = nullptr;
 	Super::Deinitialize();
@@ -138,10 +132,29 @@ void UBendingInteractionSubsystem::RegisterBuiltInReactions()
 	Add(NewObject<UElementalReaction_AeroDrag>(this), EElementalSubstance::Air, EElementalSubstance::Steam);
 }
 
+void UBendingInteractionSubsystem::RebuildReactions()
+{
+	if (IsValid(ReactionSet))
+	{
+		SetReactionSet(ReactionSet);
+		return;
+	}
+	Reactions.Reset();
+	if (SimWorld)
+	{
+		SimWorld->ClearReactions();
+		RegisterBuiltInReactions();
+	}
+}
+
 void UBendingInteractionSubsystem::SetReactionSet(UElementalReactionSet* InReactionSet)
 {
 	ReactionSet = InReactionSet;
 	Reactions.Reset();
+	if (!SimWorld)
+	{
+		return;
+	}
 	SimWorld->ClearReactions();
 	if (InReactionSet)
 	{
@@ -154,7 +167,8 @@ void UBendingInteractionSubsystem::SetReactionSet(UElementalReactionSet* InReact
 
 void UBendingInteractionSubsystem::AddReaction(UElementalReaction* Reaction)
 {
-	if (Reaction && SimWorld->AddReaction(Reaction->MakeSimEntry()))
+	BendingSim::FReactionEntry Entry;
+	if (SimWorld && IsValid(Reaction) && Reaction->MakeSimEntry(Entry) && SimWorld->AddReaction(Entry))
 	{
 		Reactions.Add(Reaction);
 	}
@@ -164,6 +178,10 @@ void UBendingInteractionSubsystem::AddReaction(UElementalReaction* Reaction)
 
 FElementalVolumeHandle UBendingInteractionSubsystem::RegisterVolume(const FElementalVolumeState& InitialState, UElementalVolumeComponent* Owner)
 {
+	if (!SimWorld)
+	{
+		return FElementalVolumeHandle();
+	}
 	const BendingSim::FHandle Handle = SimWorld->AddVolume(InitialState.ToSim(), Owner != nullptr);
 	if (Handle.IsSet())
 	{
@@ -224,7 +242,11 @@ int32 UBendingInteractionSubsystem::GetNumVolumes() const
 
 void UBendingInteractionSubsystem::QueryVolumes(const FVector& CenterCm, double RadiusCm, uint32 SubstanceMask, TArray<FElementalVolumeHandle>& OutHandles) const
 {
-	BendingSim::FHandle Found[256];
+	if (!SimWorld)
+	{
+		return;
+	}
+	BendingSim::FHandle Found[BendingSim::FSimWorld::MaxVolumes];
 	const int32 Count = SimWorld->QueryVolumes(BendingUnits::ToSim(CenterCm), RadiusCm, SubstanceMask, Found, UE_ARRAY_COUNT(Found));
 	for (int32 Index = 0; Index < Count; ++Index)
 	{
@@ -235,19 +257,29 @@ void UBendingInteractionSubsystem::QueryVolumes(const FVector& CenterCm, double 
 FElementalPhaseChange UBendingInteractionSubsystem::TransferHeat(FElementalVolumeHandle Handle, double HeatJ, double& OutAcceptedHeatJ)
 {
 	OutAcceptedHeatJ = 0.0;
+	if (!SimWorld)
+	{
+		return FElementalPhaseChange();
+	}
 	return FElementalPhaseChange::FromSim(SimWorld->TransferHeat(Handle.ToSim(), HeatJ, &OutAcceptedHeatJ));
 }
 
 void UBendingInteractionSubsystem::AddImpulse(FElementalVolumeHandle Handle, FVector ImpulseKgCmS)
 {
-	SimWorld->AddImpulse(Handle.ToSim(), BendingUnits::ToSim(ImpulseKgCmS));
+	if (SimWorld)
+	{
+		SimWorld->AddImpulse(Handle.ToSim(), BendingUnits::ToSim(ImpulseKgCmS));
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------- Surfaces
 
 void UBendingInteractionSubsystem::DepositWaterOnSurface(FVector LocationCm, double WaterMassKg, float SoilPorosity)
 {
-	SimWorld->DepositWaterOnSurface(BendingUnits::ToSim(LocationCm), WaterMassKg, SoilPorosity);
+	if (SimWorld)
+	{
+		SimWorld->DepositWaterOnSurface(BendingUnits::ToSim(LocationCm), WaterMassKg, SoilPorosity);
+	}
 }
 
 float UBendingInteractionSubsystem::GetSurfaceSaturationAt(FVector LocationCm) const
@@ -286,6 +318,12 @@ void UBendingInteractionSubsystem::Tick(float DeltaTime)
 		return;
 	}
 
+	if (Reactions.ContainsByPredicate([](const TObjectPtr<UElementalReaction>& Reaction) { return !IsValid(Reaction); }))
+	{
+		// The kernel would call into a destroyed object.
+		RebuildReactions();
+	}
+
 	ApplySettings();
 	SyncFromOwners(DeltaTime);
 	SimWorld->Advance(DeltaTime);
@@ -319,8 +357,10 @@ void UBendingInteractionSubsystem::SyncToOwners()
 	struct FPendingOwnerUpdate
 	{
 		TWeakObjectPtr<UElementalVolumeComponent> Owner;
+		FElementalVolumeHandle Handle;
 		BendingSim::FVolume Volume;
 		BendingSim::FOwnerUpdate Update;
+		bool bDepleted = false;
 	};
 	TArray<FPendingOwnerUpdate, TInlineAllocator<32>> Pending;
 
@@ -339,17 +379,21 @@ void UBendingInteractionSubsystem::SyncToOwners()
 		}
 		FPendingOwnerUpdate& Entry = Pending.AddDefaulted_GetRef();
 		Entry.Owner = OwnerBySlot[Index];
+		Entry.Handle = FElementalVolumeHandle::FromSim(Handle);
 		Entry.Volume = *SimWorld->GetVolume(Handle);
+		Entry.bDepleted = SimWorld->IsDepleted(Handle);
 		SimWorld->ConsumeOwnerUpdate(Handle, Entry.Update);
 	}
 
-	// Outside the loop: owners may unregister (and so change the slots) from these callbacks.
+	// Outside the loop: owners may unregister (and so change the slots) from these callbacks. An owner whose
+	// handle changed in an earlier callback (deactivated or re-registered) no longer owns the copied volume.
 	for (const FPendingOwnerUpdate& Entry : Pending)
 	{
-		if (UElementalVolumeComponent* Owner = Entry.Owner.Get())
+		UElementalVolumeComponent* Owner = Entry.Owner.Get();
+		if (Owner && Owner->GetVolumeHandle() == Entry.Handle)
 		{
 			Owner->PostSimulationSync(Entry.Volume, BendingUnits::ToEngine(Entry.Update.FrameImpulseKgCmS),
-				ElementalSubstance::FromSim(Entry.Update.PreviousSubstance), Entry.Update.bNewlyDepleted);
+				ElementalSubstance::FromSim(Entry.Update.PreviousSubstance), Entry.bDepleted, Entry.Update.bNewlyDepleted);
 		}
 	}
 }
@@ -359,9 +403,7 @@ void UBendingInteractionSubsystem::BroadcastEvents(double FrameSeconds)
 	BendingSim::FFreeVolumeNotice Notices[BendingSim::FSimWorld::MaxNotices];
 	const int32 NumNotices = SimWorld->ConsumeFreeVolumeNotices(Notices, UE_ARRAY_COUNT(Notices));
 
-	TArray<BendingSim::FReactionEvent> Events;
-	Events.SetNum(MaxEventsPerFrame);
-	Events.SetNum(SimWorld->FlushEvents(FrameSeconds, Events.GetData(), MaxEventsPerFrame));
+	const int32 NumEvents = SimWorld->FlushEvents(FrameSeconds, EventScratch.GetData(), EventScratch.Num());
 
 	// Everything is copied out before broadcasting: listeners may register volumes or apply heat.
 	for (int32 Index = 0; Index < NumNotices; ++Index)
@@ -377,9 +419,9 @@ void UBendingInteractionSubsystem::BroadcastEvents(double FrameSeconds)
 			OnFreeVolumeRemoved.Broadcast(Handle, Substance);
 		}
 	}
-	for (const BendingSim::FReactionEvent& SimEvent : Events)
+	for (int32 Index = 0; Index < NumEvents; ++Index)
 	{
-		const FElementalReactionEvent Event = FElementalReactionEvent::FromSim(SimEvent);
+		const FElementalReactionEvent Event = FElementalReactionEvent::FromSim(EventScratch[Index]);
 		OnReactionNative.Broadcast(Event);
 		OnReaction.Broadcast(Event);
 	}

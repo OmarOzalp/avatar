@@ -37,7 +37,7 @@ namespace BendingSim
 		return X < Y ? static_cast<unsigned short>((X << 8) | Y) : static_cast<unsigned short>((Y << 8) | X);
 	}
 
-	const char* GetSubstanceName(ESubstance Substance);
+	BENDINGSIM_API const char* GetSubstanceName(ESubstance Substance);
 
 	/** Real-world reference properties. */
 	struct FSubstanceProperties
@@ -62,7 +62,7 @@ namespace BendingSim
 		}
 	};
 
-	const FSubstanceProperties& GetSubstanceProperties(ESubstance Substance);
+	BENDINGSIM_API const FSubstanceProperties& GetSubstanceProperties(ESubstance Substance);
 
 	// ---------------------------------------------------------------- Volumes
 
@@ -77,7 +77,7 @@ namespace BendingSim
 	 * The simulated body of bent matter: what gameplay and reactions reason about. Matter is SI; shape and
 	 * kinematics are engine units (cm, cm/s) because they feed engine APIs.
 	 */
-	struct FVolume
+	struct BENDINGSIM_API FVolume
 	{
 		ESubstance Substance = ESubstance::None;
 		double MassKg = 1.0;
@@ -132,29 +132,29 @@ namespace BendingSim
 
 	// ---------------------------------------------------------------- Physics on volumes
 
-	Thermo::FThermoMatter ToMatter(const FVolume& Volume);
-	void ApplyMatter(FVolume& Volume, const Thermo::FThermoMatter& Matter);
+	BENDINGSIM_API Thermo::FThermoMatter ToMatter(const FVolume& Volume);
+	BENDINGSIM_API void ApplyMatter(FVolume& Volume, const Thermo::FThermoMatter& Matter);
 
 	/** Adds heat (J; negative extracts), walking ice <-> water <-> steam; updates the substance on full transitions. */
-	Thermo::FPhaseChangeResult AddHeat(FVolume& Volume, double HeatJ);
+	BENDINGSIM_API Thermo::FPhaseChangeResult AddHeat(FVolume& Volume, double HeatJ);
 	/** Boils the contact layer of liquid water without warming the bulk. Returns kg vaporized. */
-	double FlashVaporize(FVolume& Volume, double HeatJ);
+	BENDINGSIM_API double FlashVaporize(FVolume& Volume, double HeatJ);
 	/** Largest heat flow Hot -> Cold this step that cannot invert the temperature gradient. */
-	double MaxHeatFlow(const FVolume& Hot, const FVolume& Cold);
+	BENDINGSIM_API double MaxHeatFlow(const FVolume& Hot, const FVolume& Cold);
 	/** Heat (J) to extract to freeze this water completely; 0 if not liquid water. */
-	double HeatToFreeze(const FVolume& Volume);
+	BENDINGSIM_API double HeatToFreeze(const FVolume& Volume);
 	/** Heat (J) to add to melt this ice completely; 0 if not ice. */
-	double HeatToMelt(const FVolume& Volume);
+	BENDINGSIM_API double HeatToMelt(const FVolume& Volume);
 	/** Entrains inert mass: sensible heat conserved exactly, incoming momentum added as a pending impulse. */
-	void EntrainMass(FVolume& Volume, double MassKg, double TemperatureK, double SpecificHeat, const FVec3& VelocityCmS);
+	BENDINGSIM_API void EntrainMass(FVolume& Volume, double MassKg, double TemperatureK, double SpecificHeat, const FVec3& VelocityCmS);
 	/** Newton cooling toward ambient over Dt, integrated exactly; phase plateaus use the conductive flux. */
-	Thermo::FPhaseChangeResult ExchangeWithAmbient(FVolume& Volume, double AmbientTemperatureK, double DeltaSeconds);
+	BENDINGSIM_API Thermo::FPhaseChangeResult ExchangeWithAmbient(FVolume& Volume, double AmbientTemperatureK, double DeltaSeconds);
 	/** Quadratic drag (N) on a body seeing flow RelativeFlowMs: F = 1/2 * rho * Cd * A * |v| * v. */
-	FVec3 DragForceN(const FVec3& RelativeFlowMs, double FluidDensityKgM3, double DragCoefficient, double FrontalAreaM2);
+	BENDINGSIM_API FVec3 DragForceN(const FVec3& RelativeFlowMs, double FluidDensityKgM3, double DragCoefficient, double FrontalAreaM2);
 	/** Impulse on A (kg*cm/s) closing CouplingFraction of the velocity gap to B; apply the negative to B. */
-	FVec3 MomentumCouplingImpulse(const FVolume& A, const FVolume& B, double CouplingFraction);
+	BENDINGSIM_API FVec3 MomentumCouplingImpulse(const FVolume& A, const FVolume& B, double CouplingFraction);
 	/** Common velocity after a perfectly inelastic merge (cm/s). */
-	FVec3 MixtureVelocityCmS(const FVolume& A, const FVolume& B);
+	BENDINGSIM_API FVec3 MixtureVelocityCmS(const FVolume& A, const FVolume& B);
 
 	// ---------------------------------------------------------------- Contacts
 
@@ -185,7 +185,7 @@ namespace BendingSim
 	};
 
 	/** Sphere/capsule overlap via closest points between core segments. False when separated. */
-	bool ComputeContact(const FVolume& A, const FVolume& B, FContact& OutContact);
+	BENDINGSIM_API bool ComputeContact(const FVolume& A, const FVolume& B, FContact& OutContact);
 
 	// ---------------------------------------------------------------- Handles, events, settings
 
@@ -218,7 +218,7 @@ namespace BendingSim
 		Count
 	};
 
-	const char* GetReactionTypeName(EReactionType Type);
+	BENDINGSIM_API const char* GetReactionTypeName(EReactionType Type);
 
 	struct FReactionEvent
 	{

@@ -21,6 +21,7 @@ public:
 	UElementalReaction_Saturation();
 
 	virtual void React(BendingSim::FReactionContext& Context) const override;
+	virtual EElementalSubstance GetRequiredSubstanceA() const override { return EElementalSubstance::Water; }
 
 	/** Saturated hydraulic conductivity (m/s): ~1e-4 to 1e-3 for sandy soil, ~1e-7 for clay. */
 	UPROPERTY(EditAnywhere, Category = "Absorption", meta = (ClampMin = 0.0))
