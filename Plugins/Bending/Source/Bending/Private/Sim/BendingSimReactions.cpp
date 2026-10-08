@@ -257,9 +257,9 @@ namespace BendingSim
 
 		// Evaporation, melting, and flame against rock.
 		Add(ESubstance::Fire, ESubstance::Water, &HeatExchangeReactionFunction, &Params.HeatExchange);
-		Add(ESubstance::Fire, ESubstance::Ice, &HeatExchangeReactionFunction, &Params.HeatExchange);
+		Add(ESubstance::Fire, ESubstance::Ice, &HeatExchangeReactionFunction, &Params.FlameOnSolid);
 		Add(ESubstance::Steam, ESubstance::Ice, &HeatExchangeReactionFunction, &Params.HeatExchange);
-		Add(ESubstance::Fire, ESubstance::Earth, &HeatExchangeReactionFunction, &Params.HeatExchange);
+		Add(ESubstance::Fire, ESubstance::Earth, &HeatExchangeReactionFunction, &Params.FlameOnSolid);
 		// Oxygenation.
 		Add(ESubstance::Air, ESubstance::Fire, &OxygenationReactionFunction, &Params.Oxygenation);
 		// Mud.

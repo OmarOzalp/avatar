@@ -55,6 +55,13 @@ namespace BendingSim
 		double Strength = 1.0;
 	};
 
+	inline FHeatExchangeParams MakeFlameOnSolidParams()
+	{
+		FHeatExchangeParams Params;
+		Params.HeatTransferCoefficient = 1500.0;
+		return Params;
+	}
+
 	/**
 	 * Q = h * A_exchange * dT * dt, capped so the gradient cannot invert. Liquid water flash-boils into steam
 	 * (spawned as a free volume); ice banks latent heat until it melts; inelastic momentum coupling drags the
@@ -128,14 +135,18 @@ namespace BendingSim
 
 	struct FDefaultReactionParams
 	{
+		/** Flame on liquid water (and steam condensing on ice): the nucleate-boiling range. */
 		FHeatExchangeParams HeatExchange;
+		/** Flame impinging on a solid (ice, rock): gas-side convection limits it to ~10^3 W/(m^2*K). */
+		FHeatExchangeParams FlameOnSolid = MakeFlameOnSolidParams();
 		FOxygenationParams Oxygenation;
 		FSaturationParams Saturation;
 		FAeroDragParams AeroDrag;
 	};
 
 	/**
-	 * Registers the standard rules: Fire+Water, Fire+Ice, Steam+Ice, Fire+Earth heat exchange; Air+Fire oxygenation;
+	 * Registers the standard rules: Fire+Water, Steam+Ice heat exchange (HeatExchange), Fire+Ice and Fire+Earth heat
+	 * exchange (FlameOnSolid); Air+Fire oxygenation;
 	 * Water+Earth saturation; Air+Earth/Water/Ice/Steam drag. Params must outlive the world's use of them.
 	 */
 	BENDINGSIM_API void AddBuiltInReactions(FSimWorld& World, const FDefaultReactionParams& Params);

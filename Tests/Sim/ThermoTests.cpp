@@ -147,6 +147,32 @@ namespace
 		ExpectTrue("KCbrt relative error < 1e-15 over [1e-9, 1e9]", WorstCbrt < 1e-15);
 	}
 
+	void TrigMatchesLibm()
+	{
+		double WorstSin = 0.0;
+		double WorstCos = 0.0;
+		for (double X = -100.0; X <= 100.0; X += 0.0173)
+		{
+			WorstSin = KMax(WorstSin, std::fabs(KSin(X) - std::sin(X)));
+			WorstCos = KMax(WorstCos, std::fabs(KCos(X) - std::cos(X)));
+		}
+		ExpectTrue("KSin absolute error < 1e-13 over [-100, 100]", WorstSin < 1e-13);
+		ExpectTrue("KCos absolute error < 1e-13 over [-100, 100]", WorstCos < 1e-13);
+		double WorstAtan2 = 0.0;
+		for (double A = -3.2; A <= 3.2; A += 0.0137)
+		{
+			const double Radii[] = { 1e-3, 1.0, 1e3 };
+			for (double R : Radii)
+			{
+				const double Y = R * std::sin(A);
+				const double X = R * std::cos(A);
+				WorstAtan2 = KMax(WorstAtan2, std::fabs(KAtan2(Y, X) - std::atan2(Y, X)));
+			}
+		}
+		ExpectTrue("KAtan2 absolute error < 1e-14 around the circle", WorstAtan2 < 1e-14);
+		ExpectTrue("KFloor rounds toward -inf", KFloor(-1.5) == -2.0 && KFloor(1.5) == 1.0 && KFloor(-2.0) == -2.0 && KFloor(0.0) == 0.0);
+	}
+
 	void SegmentClosestPointsMatchBruteForce()
 	{
 		const FVec3 P0(0, 0, 0), P1(100, 0, 0), Q0(30, -50, 20), Q1(70, 60, 20);
@@ -171,6 +197,7 @@ namespace
 int main()
 {
 	ExpAndCbrtMatchLibm();
+	TrigMatchesLibm();
 	SegmentClosestPointsMatchBruteForce();
 	IceToSteamWalksEveryPhase();
 	FreezeThenMeltRoundTrips();

@@ -88,6 +88,80 @@ namespace BendingSim
 		return bNegative ? -Y : Y;
 	}
 
+	/** Largest integer <= X (as double). Exact for |X| < 2^52. */
+	inline double KFloor(double X)
+	{
+		const double Truncated = static_cast<double>(static_cast<long long>(X));
+		return Truncated > X ? Truncated - 1.0 : Truncated;
+	}
+
+	/** sin(X): reduction to [-pi/2, pi/2], then a Taylor series to x^23 (error ~1e-16). */
+	inline double KSin(double X)
+	{
+		constexpr double TwoPi = 2.0 * Pi;
+		X -= TwoPi * KFloor(X / TwoPi + 0.5);
+		if (X > 0.5 * Pi)
+		{
+			X = Pi - X;
+		}
+		else if (X < -0.5 * Pi)
+		{
+			X = -Pi - X;
+		}
+		const double X2 = X * X;
+		double Term = X;
+		double Sum = X;
+		for (int K = 1; K <= 11; ++K)
+		{
+			Term *= -X2 / ((2.0 * K) * (2.0 * K + 1.0));
+			Sum += Term;
+		}
+		return Sum;
+	}
+
+	inline double KCos(double X) { return KSin(X + 0.5 * Pi); }
+
+	/** atan(X): two argument halvings bring |x| under 0.2, then the alternating series. */
+	inline double KAtan(double X)
+	{
+		const bool bNegative = X < 0.0;
+		double A = bNegative ? -X : X;
+		const bool bInverted = A > 1.0;
+		if (bInverted)
+		{
+			A = 1.0 / A;
+		}
+		A = A / (1.0 + KSqrt(1.0 + A * A));
+		A = A / (1.0 + KSqrt(1.0 + A * A));
+		const double A2 = A * A;
+		double Power = A;
+		double Sum = A;
+		for (int K = 1; K <= 12; ++K)
+		{
+			Power *= -A2;
+			Sum += Power / (2.0 * K + 1.0);
+		}
+		double Result = 4.0 * Sum;
+		if (bInverted)
+		{
+			Result = 0.5 * Pi - Result;
+		}
+		return bNegative ? -Result : Result;
+	}
+
+	inline double KAtan2(double Y, double X)
+	{
+		if (X > 0.0)
+		{
+			return KAtan(Y / X);
+		}
+		if (X < 0.0)
+		{
+			return Y >= 0.0 ? KAtan(Y / X) + Pi : KAtan(Y / X) - Pi;
+		}
+		return Y > 0.0 ? 0.5 * Pi : (Y < 0.0 ? -0.5 * Pi : 0.0);
+	}
+
 	/** Hermite smoothstep between Edge0 and Edge1. */
 	constexpr double KSmoothStep(double Edge0, double Edge1, double X)
 	{
@@ -136,6 +210,7 @@ namespace BendingSim
 
 		/** Componentwise product. */
 		constexpr FVec3 Mul(const FVec3& O) const { return FVec3(X * O.X, Y * O.Y, Z * O.Z); }
+		constexpr FVec3 Cross(const FVec3& O) const { return FVec3(Y * O.Z - Z * O.Y, Z * O.X - X * O.Z, X * O.Y - Y * O.X); }
 	};
 
 	constexpr FVec3 operator*(double S, const FVec3& V) { return V * S; }

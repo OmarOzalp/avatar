@@ -18,3 +18,4 @@ Plugins/*/Intermediate/
 # Local test builds
 Tests/**/build/
 Tools/SimDemo/build/
+Tools/Sandbox3D/build/

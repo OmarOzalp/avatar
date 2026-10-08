@@ -19,6 +19,8 @@ namespace BendingSim::Thermo
 		inline constexpr double SpecificHeatWater = 4186.0;       // J/(kg*K)
 		inline constexpr double SpecificHeatSteam = 2010.0;       // J/(kg*K)
 		inline constexpr double MinTemperatureK = 1.0;
+		/** Relative slack on latent-heat thresholds so that exactly HeatToFreeze / HeatToMelt always completes the change. */
+		inline constexpr double PhaseChangeTolerance = 1e-9;
 		inline constexpr double PlateauToleranceK = 1e-3;
 	}
 
@@ -163,13 +165,14 @@ namespace BendingSim::Thermo
 					}
 
 					const double LatentRemaining = M.MassKg * LatentHeatFusion - M.LatentHeatJ;
-					if (Q < LatentRemaining)
+					// Tolerance: adding exactly HeatToMelt must melt, whatever the rounding of the sensible part.
+					if (Q < LatentRemaining * (1.0 - PhaseChangeTolerance))
 					{
 						M.LatentHeatJ += Q;
 						Q = 0.0;
 						break;
 					}
-					Q -= LatentRemaining;
+					Q = KMax(Q - LatentRemaining, 0.0);
 					Result.MeltedKg += M.MassKg;
 					Result.bPhaseChanged = true;
 					M.Phase = EThermoPhase::Water;
@@ -247,13 +250,14 @@ namespace BendingSim::Thermo
 
 					// LatentHeatJ <= 0 here: heat already extracted toward freezing.
 					const double LatentRemaining = M.MassKg * LatentHeatFusion + M.LatentHeatJ;
-					if (-Q < LatentRemaining)
+					// Tolerance: extracting exactly HeatToFreeze must freeze, whatever the rounding of the sensible part.
+					if (-Q < LatentRemaining * (1.0 - PhaseChangeTolerance))
 					{
 						M.LatentHeatJ += Q;
 						Q = 0.0;
 						break;
 					}
-					Q += LatentRemaining;
+					Q = KMin(Q + LatentRemaining, 0.0);
 					Result.FrozenKg += M.MassKg;
 					Result.bPhaseChanged = true;
 					M.Phase = EThermoPhase::Ice;
