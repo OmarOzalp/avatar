@@ -4,42 +4,42 @@ namespace BendingSim
 {
 	namespace
 	{
-		using E = ETechnique;
-		using El = ETechniqueElement;
-		using S = ETechniqueSlot;
+		using TechId = ETechnique;
+		using TechElem = ETechniqueElement;
+		using TechSlot = ETechniqueSlot;
 
-		//                           technique          name             description
-		//                           element    slot          startup active recovery  chi  stamina hold
+		// technique, name, description,
+		//     element, slot, startup / active / recovery frames, chi, stamina, hold
 		const FTechniqueInfo GTechniques[] = {
-			{ E::None, "", "", El::None, S::Primary, 1, 1, 0, 0.0, 0.0, false },
-			{ E::WaterWhip, "Water Whip", "Draw water from a pond within 15 m. Press to lash; keep holding to keep it stretched toward the aim.",
-				El::Water, S::Primary, 10, 4, 14, 6.0, 4.0, false },
-			{ E::WaterFreeze, "Freeze / Thaw", "Pull the heat out of the whip to turn it to ice, or put it back.",
-				El::Water, S::Secondary, 16, 3, 12, 4.0, 2.0, false },
-			{ E::WaterRelease, "Release", "Let the water fall: it soaks into the ground and turns soil to mud.",
-				El::Water, S::Special, 4, 2, 8, 0.0, 0.0, false },
-			{ E::WaterBlast, "Water Blast", "Throw the whip's water as one ball.",
-				El::Water, S::Utility, 10, 3, 16, 6.0, 6.0, false },
-			{ E::RockThrow, "Rock Throw", "Pull a rock out of the ground (it leaves a crater) and hurl it.",
-				El::Earth, S::Primary, 20, 3, 18, 6.0, 8.0, false },
-			{ E::EarthWall, "Earth Wall", "Raise a wall across your aim out of the trenches beside it.",
-				El::Earth, S::Secondary, 12, 18, 14, 6.0, 8.0, false },
-			{ E::RaiseGround, "Raise Ground", "Hold: lift a pillar at the aim point; its soil comes from the ring around it.",
-				El::Earth, S::Special, 8, 6, 8, 2.0, 2.0, true },
-			{ E::LowerGround, "Lower Ground", "Hold: dig a pit at the aim point; its soil piles up on the rim.",
-				El::Earth, S::Utility, 8, 6, 8, 2.0, 2.0, true },
-			{ E::FireBlast, "Fire Blast", "A 0.6 kg, 1500 K blast of flame at 18 m/s.",
-				El::Fire, S::Primary, 8, 3, 14, 5.0, 5.0, false },
-			{ E::FlameStream, "Flame Stream", "Hold: a stream of flame.",
-				El::Fire, S::Secondary, 6, 6, 10, 3.0, 3.0, true },
-			{ E::GroundFlame, "Ground Flame", "Hold: keep a flame burning at the aim point (dries mud, melts ice).",
-				El::Fire, S::Utility, 10, 6, 10, 3.0, 2.0, true },
-			{ E::AirBlast, "Air Blast", "41 kg of compressed air at 40 m/s: knocks dummies back, feeds fire, barely moves dense rock.",
-				El::Air, S::Primary, 10, 3, 16, 5.0, 5.0, false },
-			{ E::AirGust, "Gust", "Hold: a steady stream of wind.",
-				El::Air, S::Secondary, 6, 6, 10, 3.0, 3.0, true },
-			{ E::AirJump, "Air Jump", "Launch yourself upward on a column of air.",
-				El::Air, S::Utility, 4, 2, 12, 4.0, 6.0, false },
+			{ TechId::None, "", "", TechElem::None, TechSlot::Primary, 1, 1, 0, 0.0, 0.0, false },
+			{ TechId::WaterWhip, "Water Whip", "Draw water from a pond within 15 m. Press to lash; keep holding to keep it stretched toward the aim.",
+				TechElem::Water, TechSlot::Primary, 10, 4, 14, 6.0, 4.0, false },
+			{ TechId::WaterFreeze, "Freeze / Thaw", "Pull the heat out of the whip to turn it to ice, or put it back.",
+				TechElem::Water, TechSlot::Secondary, 16, 3, 12, 4.0, 2.0, false },
+			{ TechId::WaterRelease, "Release", "Let the water fall: it soaks into the ground and turns soil to mud.",
+				TechElem::Water, TechSlot::Special, 4, 2, 8, 0.0, 0.0, false },
+			{ TechId::WaterBlast, "Water Blast", "Throw the whip's water as one ball.",
+				TechElem::Water, TechSlot::Utility, 10, 3, 16, 6.0, 6.0, false },
+			{ TechId::RockThrow, "Rock Throw", "Pull a rock out of the ground (it leaves a crater) and hurl it.",
+				TechElem::Earth, TechSlot::Primary, 20, 3, 18, 6.0, 8.0, false },
+			{ TechId::EarthWall, "Earth Wall", "Raise a wall across your aim out of the trenches beside it.",
+				TechElem::Earth, TechSlot::Secondary, 12, 18, 14, 6.0, 8.0, false },
+			{ TechId::RaiseGround, "Raise Ground", "Hold: lift a pillar at the aim point; its soil comes from the ring around it.",
+				TechElem::Earth, TechSlot::Special, 8, 6, 8, 2.0, 2.0, true },
+			{ TechId::LowerGround, "Lower Ground", "Hold: dig a pit at the aim point; its soil piles up on the rim.",
+				TechElem::Earth, TechSlot::Utility, 8, 6, 8, 2.0, 2.0, true },
+			{ TechId::FireBlast, "Fire Blast", "A 0.6 kg, 1500 K blast of flame at 18 m/s.",
+				TechElem::Fire, TechSlot::Primary, 8, 3, 14, 5.0, 5.0, false },
+			{ TechId::FlameStream, "Flame Stream", "Hold: a stream of flame.",
+				TechElem::Fire, TechSlot::Secondary, 6, 6, 10, 3.0, 3.0, true },
+			{ TechId::GroundFlame, "Ground Flame", "Hold: keep a flame burning at the aim point (dries mud, melts ice).",
+				TechElem::Fire, TechSlot::Utility, 10, 6, 10, 3.0, 2.0, true },
+			{ TechId::AirBlast, "Air Blast", "41 kg of compressed air at 40 m/s: knocks dummies back, feeds fire, barely moves dense rock.",
+				TechElem::Air, TechSlot::Primary, 10, 3, 16, 5.0, 5.0, false },
+			{ TechId::AirGust, "Gust", "Hold: a steady stream of wind.",
+				TechElem::Air, TechSlot::Secondary, 6, 6, 10, 3.0, 3.0, true },
+			{ TechId::AirJump, "Air Jump", "Launch yourself upward on a column of air.",
+				TechElem::Air, TechSlot::Utility, 4, 2, 12, 4.0, 6.0, false },
 		};
 		static_assert(sizeof(GTechniques) / sizeof(GTechniques[0]) == static_cast<int>(ETechnique::Count), "One entry per technique");
 

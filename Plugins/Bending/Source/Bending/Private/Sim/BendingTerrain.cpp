@@ -29,24 +29,24 @@ namespace BendingSim
 
 	// ---------------------------------------------------------------------------------------------------- Brush
 
-	FTerrainBrush FTerrainBrush::Disc(const FVec3& CenterCm, double RadiusCm, double FalloffCm)
+	FTerrainBrush FTerrainBrush::Disc(const FVec3& InCenterCm, double InRadiusCm, double InFalloffCm)
 	{
-		return Ring(CenterCm, 0.0, RadiusCm, FalloffCm);
+		return Ring(InCenterCm, 0.0, InRadiusCm, InFalloffCm);
 	}
 
-	FTerrainBrush FTerrainBrush::Ring(const FVec3& CenterCm, double InnerRadiusCm, double OuterRadiusCm, double FalloffCm)
+	FTerrainBrush FTerrainBrush::Ring(const FVec3& InCenterCm, double InInnerRadiusCm, double InOuterRadiusCm, double InFalloffCm)
 	{
-		return Band(CenterCm, CenterCm, InnerRadiusCm, OuterRadiusCm, FalloffCm);
+		return Band(InCenterCm, InCenterCm, InInnerRadiusCm, InOuterRadiusCm, InFalloffCm);
 	}
 
-	FTerrainBrush FTerrainBrush::Band(const FVec3& StartCm, const FVec3& EndCm, double InnerCm, double OuterCm, double FalloffCm)
+	FTerrainBrush FTerrainBrush::Band(const FVec3& InStartCm, const FVec3& InEndCm, double InInnerCm, double InOuterCm, double InFalloffCm)
 	{
 		FTerrainBrush Brush;
-		Brush.StartCm = StartCm;
-		Brush.EndCm = EndCm;
-		Brush.InnerCm = KMax(InnerCm, 0.0);
-		Brush.OuterCm = KMax(OuterCm, Brush.InnerCm);
-		Brush.FalloffCm = KMax(FalloffCm, 0.0);
+		Brush.StartCm = InStartCm;
+		Brush.EndCm = InEndCm;
+		Brush.InnerCm = KMax(InInnerCm, 0.0);
+		Brush.OuterCm = KMax(InOuterCm, Brush.InnerCm);
+		Brush.FalloffCm = KMax(InFalloffCm, 0.0);
 		return Brush;
 	}
 

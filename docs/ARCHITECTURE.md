@@ -317,7 +317,12 @@ What to check first if something looks wrong:
   name in `UBendingSandboxLibrary` / `ABendableTerrain`, or give the terrain a lit material that reads vertex colour.
 - **Looking up and down feels inverted**: flip the `Negate` modifier on the mouse Y axis in `AAvatarCharacter`.
 - **Packaged build missing meshes**: `Config/DefaultGame.ini` cooks `/Engine/BasicShapes` and
-  `/Engine/EngineDebugMaterials`; add any other engine content the sandbox loads by path.
+  `/Engine/EngineDebugMaterials`; add any other engine content the sandbox loads by path. Steam, wet ground and the
+  whip are instanced meshes tinted with `BasicShapeMaterial`. If that material is not flagged for instanced static
+  meshes, the editor compiles the permutation on the fly, but a packaged build draws them with the default material.
+  The fix is a project copy of the material with the flag set.
+- **CommonUI warnings at startup**: the plugin is still enabled in `Avatar.uproject`, but the sandbox does not use it
+  and no longer sets its viewport client. Disable the plugin if its warnings get in the way.
 
 To build a character from assets instead, the earlier path still works: create input actions and a mapping context,
 a `BendingInputConfig`, one `BendingMoveDefinition` per move, a `BendingDiscipline`, and `BP_AvatarCharacter` with

@@ -28,10 +28,10 @@ namespace BendingSim
 		double OuterCm = 100.0;
 		double FalloffCm = 50.0;
 
-		static FTerrainBrush Disc(const FVec3& CenterCm, double RadiusCm, double FalloffCm);
-		static FTerrainBrush Ring(const FVec3& CenterCm, double InnerRadiusCm, double OuterRadiusCm, double FalloffCm);
-		/** Band around a segment: InnerCm = 0 is a wall core, InnerCm > 0 the trenches on both sides of it. */
-		static FTerrainBrush Band(const FVec3& StartCm, const FVec3& EndCm, double InnerCm, double OuterCm, double FalloffCm);
+		static FTerrainBrush Disc(const FVec3& InCenterCm, double InRadiusCm, double InFalloffCm);
+		static FTerrainBrush Ring(const FVec3& InCenterCm, double InInnerRadiusCm, double InOuterRadiusCm, double InFalloffCm);
+		/** Band around a segment: InInnerCm = 0 is a wall core, InInnerCm > 0 the trenches on both sides of it. */
+		static FTerrainBrush Band(const FVec3& InStartCm, const FVec3& InEndCm, double InInnerCm, double InOuterCm, double InFalloffCm);
 
 		double GetWeight(double XCm, double YCm) const;
 		double GetReachCm() const { return OuterCm + FalloffCm; }

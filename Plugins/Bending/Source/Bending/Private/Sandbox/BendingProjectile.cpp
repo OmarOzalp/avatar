@@ -66,6 +66,7 @@ ABendingProjectile::ABendingProjectile()
 
 	Light = CreateDefaultSubobject<UPointLightComponent>(TEXT("Light"));
 	Light->SetupAttachment(Root);
+	Light->SetMobility(EComponentMobility::Movable);
 	Light->IntensityUnits = ELightUnits::Candelas;
 	Light->SetCastShadows(false);
 	Light->SetVisibility(false);
