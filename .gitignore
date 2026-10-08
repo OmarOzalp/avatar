@@ -1,0 +1,19 @@
+# Unreal generated
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+.vs/
+.vscode/
+.idea/
+*.sln
+*.suo
+*.xcworkspace
+*.xcodeproj
+*.code-workspace
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# Local test builds
+Tests/**/build/
