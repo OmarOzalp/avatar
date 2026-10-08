@@ -1,12 +1,13 @@
 #pragma once
 
 /**
- * Engine-independent thermodynamics and contact-geometry kernel for elemental matter.
- *
- * Deliberately free of Unreal includes so Tests/PhysicsKernel can compile and verify it with a plain
- * C++ compiler (energy conservation across ice <-> water <-> steam). Everything here is SI: kg, K, J, m.
+ * Thermodynamics and contact geometry for elemental matter: part of the engine-independent simulation
+ * kernel (see BendingSimWorld.h). No Unreal or standard-library includes, so the same source builds into
+ * the plugin, the native tests and the freestanding WebAssembly sandbox. Everything here is SI: kg, K, J, m.
  */
-namespace BendingKernel
+#include "Sim/BendingSimMath.h"
+
+namespace BendingSim::Thermo
 {
 	namespace Constants
 	{
@@ -18,13 +19,8 @@ namespace BendingKernel
 		inline constexpr double SpecificHeatWater = 4186.0;       // J/(kg*K)
 		inline constexpr double SpecificHeatSteam = 2010.0;       // J/(kg*K)
 		inline constexpr double MinTemperatureK = 1.0;
-		inline constexpr double Pi = 3.14159265358979323846;
 		inline constexpr double PlateauToleranceK = 1e-3;
 	}
-
-	template <typename T> constexpr T KMin(T A, T B) { return A < B ? A : B; }
-	template <typename T> constexpr T KMax(T A, T B) { return A > B ? A : B; }
-	template <typename T> constexpr T KClamp(T V, T Lo, T Hi) { return V < Lo ? Lo : (V > Hi ? Hi : V); }
 
 	/** Phase family. Inert matter (earth, fire, air) stores sensible heat only. */
 	enum class EThermoPhase : unsigned char
@@ -433,6 +429,6 @@ namespace BendingKernel
 	{
 		const double Small = KMin(RadiusA, RadiusB);
 		const double Large = KMax(RadiusA, RadiusB);
-		return 2.0 * Constants::Pi * Small * CapHeightInside(Small, Large, Distance);
+		return 2.0 * Pi * Small * CapHeightInside(Small, Large, Distance);
 	}
 }

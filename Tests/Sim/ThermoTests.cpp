@@ -1,30 +1,17 @@
-// Stand-alone checks for the engine-independent physics kernel. Build and run with Tests/PhysicsKernel/run.sh.
+// Thermodynamics and kernel-math checks. Build and run with Tests/run_all.sh.
 
-#include "Physics/ElementalThermoKernel.h"
+#include "SimTestHarness.h"
+#include "Sim/BendingThermo.h"
 
 #include <cmath>
 #include <cstdio>
 
-using namespace BendingKernel;
-using namespace BendingKernel::Constants;
+using namespace BendingSim;
+using namespace BendingSim::Thermo;
+using namespace BendingSim::Thermo::Constants;
 
 namespace
 {
-	int GFailures = 0;
-
-	void ExpectNear(const char* What, double Actual, double Expected, double Tolerance)
-	{
-		const bool bOk = std::fabs(Actual - Expected) <= Tolerance;
-		std::printf("[%s] %-58s actual=%.6f expected=%.6f\n", bOk ? " OK " : "FAIL", What, Actual, Expected);
-		GFailures += bOk ? 0 : 1;
-	}
-
-	void ExpectTrue(const char* What, bool bCondition)
-	{
-		std::printf("[%s] %s\n", bCondition ? " OK " : "FAIL", What);
-		GFailures += bCondition ? 0 : 1;
-	}
-
 	FThermoMatter Make(EThermoPhase Phase, double MassKg, double TemperatureK)
 	{
 		FThermoMatter M;
@@ -143,10 +130,48 @@ namespace
 			ContactExchangeArea(R, BigR, BigR - R + 1e-6), 4.0 * Pi * R * R, 1e-4);
 		ExpectNear("immersion fraction halfway", ImmersionFraction(R, 1e6, 1e6), 0.5, 1e-3);
 	}
+
+	void ExpAndCbrtMatchLibm()
+	{
+		double WorstExp = 0.0;
+		for (double X = -50.0; X <= 50.0; X += 0.137)
+		{
+			WorstExp = KMax(WorstExp, std::fabs(KExp(X) - std::exp(X)) / std::exp(X));
+		}
+		ExpectTrue("KExp relative error < 1e-14 over [-50, 50]", WorstExp < 1e-14);
+		double WorstCbrt = 0.0;
+		for (double X = 1e-9; X < 1e9; X *= 1.37)
+		{
+			WorstCbrt = KMax(WorstCbrt, std::fabs(KCbrt(X) - std::cbrt(X)) / std::cbrt(X));
+		}
+		ExpectTrue("KCbrt relative error < 1e-15 over [1e-9, 1e9]", WorstCbrt < 1e-15);
+	}
+
+	void SegmentClosestPointsMatchBruteForce()
+	{
+		const FVec3 P0(0, 0, 0), P1(100, 0, 0), Q0(30, -50, 20), Q1(70, 60, 20);
+		FVec3 A, B;
+		ClosestPointsBetweenSegments(P0, P1, Q0, Q1, A, B);
+		double Best = 1e300;
+		for (int I = 0; I <= 400; ++I)
+		{
+			for (int J = 0; J <= 400; ++J)
+			{
+				const FVec3 PA = P0 + (P1 - P0) * (I / 400.0);
+				const FVec3 PB = Q0 + (Q1 - Q0) * (J / 400.0);
+				Best = KMin(Best, Distance(PA, PB));
+			}
+		}
+		ExpectNear("segment-segment distance vs brute force", Distance(A, B), Best, 1e-2);
+		ClosestPointsBetweenSegments(P0, P1, FVec3(0, 10, 0), FVec3(100, 10, 0), A, B);
+		ExpectNear("parallel segments", Distance(A, B), 10.0, 1e-9);
+	}
 }
 
 int main()
 {
+	ExpAndCbrtMatchLibm();
+	SegmentClosestPointsMatchBruteForce();
 	IceToSteamWalksEveryPhase();
 	FreezeThenMeltRoundTrips();
 	PartialMeltBanksLatentHeat();
@@ -156,6 +181,5 @@ int main()
 	MixingConservesSensibleHeat();
 	ContactAreaIsContinuous();
 
-	std::printf("\n%s (%d failure%s)\n", GFailures == 0 ? "ALL PASSED" : "FAILED", GFailures, GFailures == 1 ? "" : "s");
-	return GFailures == 0 ? 0 : 1;
+	return SimTest::Finish("Thermodynamics & kernel math");
 }

@@ -17,3 +17,4 @@ Plugins/*/Intermediate/
 
 # Local test builds
 Tests/**/build/
+Tools/SimDemo/build/

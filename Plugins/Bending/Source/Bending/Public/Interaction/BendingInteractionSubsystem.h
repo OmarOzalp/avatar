@@ -2,23 +2,20 @@
 
 #include "CoreMinimal.h"
 #include "Interaction/ElementalVolumeTypes.h"
+#include "Sim/BendingSimWorld.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Templates/UniquePtr.h"
 #include "BendingInteractionSubsystem.generated.h"
 
-class UBendingSettings;
 class UElementalReaction;
 class UElementalReactionSet;
 class UElementalVolumeComponent;
-struct FElementalReactionContext;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FElementalReactionSignature, const FElementalReactionEvent&, Event);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FElementalFreeVolumeSignature, FElementalVolumeHandle, Handle, EElementalSubstance, Substance);
 DECLARE_MULTICAST_DELEGATE_OneParam(FElementalReactionNativeSignature, const FElementalReactionEvent&);
 
-/**
- * Wet ground. Landscape cannot carry per-location physical materials at runtime, so moisture lives here
- * and traction is queried by position (characters scale ground friction, bodies swap physical materials).
- */
+/** Wet ground (Blueprint view of BendingSim::FMoisturePatch). */
 USTRUCT(BlueprintType)
 struct BENDING_API FSurfaceMoisturePatch
 {
@@ -34,26 +31,22 @@ struct BENDING_API FSurfaceMoisturePatch
 	double WaterKg = 0.0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Moisture")
-	float Porosity = 0.3f;
+	float Porosity = 0.f;
 
-	/** Water (kg) the soil under this patch can hold: rho_water * porosity * depth * area. */
-	[[nodiscard]] double GetCapacityKg(double SoilDepthM) const;
-	[[nodiscard]] double GetSaturation(double SoilDepthM) const;
+	UPROPERTY(BlueprintReadOnly, Category = "Moisture")
+	float Saturation = 0.f;
 };
 
 /**
- * Cross-element interaction simulation for one world.
+ * Cross-element interaction simulation for one world: an engine adapter over BendingSim::FSimWorld.
  *
- * Bent matter registers as elemental volumes (UElementalVolumeComponent, or ownerless gas such as steam).
- * Each fixed step (60 Hz by default):
- *   1. sweep-and-prune broadphase along the axis of greatest spread, filtered by the reaction table;
- *   2. sphere/capsule narrowphase producing an exchange area, immersion and normal per pair;
- *   3. data-driven reactions exchange mass, momentum and heat;
- *   4. ambient heat exchange, buoyancy of free gas, moisture drying, depletion.
- * Owners sync in once per frame before stepping and receive accumulated impulses after.
- *
- * Volumes are POD slots in a sparse array, addressed by serial-checked handles; nothing in the step
- * touches UObjects, and every outward callback is deferred until the step completes.
+ * The physics (fixed-step broadphase, contacts, reactions, steam, moisture, depletion) lives in the
+ * engine-independent kernel under Sim/, which is compiled and tested outside Unreal (Tests/run_all.sh) and also
+ * runs in the WebAssembly sandbox. This class only:
+ *   - feeds the kernel settings from Project Settings and the world's gravity,
+ *   - syncs UElementalVolumeComponent owners in before the step and out after (impulses, phase changes, depletion),
+ *   - registers designer reaction rules, and
+ *   - converts kernel events into Blueprint-visible delegates.
  */
 UCLASS()
 class BENDING_API UBendingInteractionSubsystem : public UTickableWorldSubsystem
@@ -77,24 +70,31 @@ public:
 	[[nodiscard]] bool IsValidVolume(FElementalVolumeHandle Handle) const;
 	/** Registered but spent (mass ran out, flame went out); waiting for its owner to unregister or re-register. */
 	[[nodiscard]] bool IsVolumeDepleted(FElementalVolumeHandle Handle) const;
-	[[nodiscard]] FElementalVolumeState* GetVolume(FElementalVolumeHandle Handle);
-	[[nodiscard]] const FElementalVolumeState* GetVolume(FElementalVolumeHandle Handle) const;
+	/** Direct access to the simulated body for native owners that drive matter themselves. */
+	[[nodiscard]] BendingSim::FVolume* GetVolume(FElementalVolumeHandle Handle);
+	[[nodiscard]] const BendingSim::FVolume* GetVolume(FElementalVolumeHandle Handle) const;
 	[[nodiscard]] UElementalVolumeComponent* GetVolumeOwner(FElementalVolumeHandle Handle) const;
 
 	UFUNCTION(BlueprintPure, Category = "Bending|Interaction")
 	bool GetVolumeState(FElementalVolumeHandle Handle, FElementalVolumeState& OutState) const;
 
 	UFUNCTION(BlueprintPure, Category = "Bending|Interaction")
-	int32 GetNumVolumes() const { return Volumes.Num(); }
+	int32 GetNumVolumes() const;
 
 	/** Volumes whose shape comes within RadiusCm of CenterCm, filtered by ElementalSubstance::ToMask bits. */
 	void QueryVolumes(const FVector& CenterCm, double RadiusCm, uint32 SubstanceMask, TArray<FElementalVolumeHandle>& OutHandles) const;
 
+	/** Native access to the kernel world, for tools and tests. */
+	[[nodiscard]] BendingSim::FSimWorld& GetSimWorld() const { return *SimWorld; }
+
 	// ---------------------------------------------------------------- Bender commands
 
-	/** Adds heat (J); negative extracts it (freezing a water whip). Phase changes are reported as events. */
+	/**
+	 * Adds heat (J); negative extracts it (freezing a water whip). Phase changes are reported as events.
+	 * Flame cannot be heated past MaxFlameTemperatureK; OutAcceptedHeatJ is what a bender should pay chi for.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Bending|Interaction")
-	FElementalPhaseChange TransferHeat(FElementalVolumeHandle Handle, double HeatJ);
+	FElementalPhaseChange TransferHeat(FElementalVolumeHandle Handle, double HeatJ, double& OutAcceptedHeatJ);
 
 	/** Impulse (kg*cm/s) applied on the next step and forwarded to the owner like any reaction impulse. */
 	UFUNCTION(BlueprintCallable, Category = "Bending|Interaction")
@@ -114,22 +114,16 @@ public:
 	float GetSurfaceTractionMultiplierAt(FVector LocationCm) const;
 
 	UFUNCTION(BlueprintPure, Category = "Bending|Surfaces")
-	static float GetTractionMultiplierForSaturation(float Saturation);
-
-	const TArray<FSurfaceMoisturePatch>& GetMoisturePatches() const { return MoisturePatches; }
+	TArray<FSurfaceMoisturePatch> GetMoisturePatches() const;
 
 	// ---------------------------------------------------------------- Reactions
 
 	void SetReactionSet(UElementalReactionSet* InReactionSet);
 	void AddReaction(UElementalReaction* Reaction);
 
-	/** Called through FElementalReactionContext. */
-	void EmitReactionEvent(const FElementalReactionContext& Context, EElementalReactionType Type, double MassKg, double EnergyJ);
-	void QueueFreeVolume(const FElementalVolumeState& State);
-
 	// ---------------------------------------------------------------- Events
 
-	/** Continuous reactions arrive aggregated every ReactionEventIntervalS; discrete ones (melting, extinguished) at frame end. */
+	/** Continuous reactions arrive aggregated every ReactionEventIntervalS; discrete ones (melting, extinguished) every frame. */
 	UPROPERTY(BlueprintAssignable, Category = "Bending|Interaction")
 	FElementalReactionSignature OnReaction;
 
@@ -143,86 +137,22 @@ public:
 	FElementalFreeVolumeSignature OnFreeVolumeRemoved;
 
 private:
-	struct FVolumeSlot
-	{
-		FElementalVolumeState State;
-		TWeakObjectPtr<UElementalVolumeComponent> Owner;
-		/** Impulse accumulated over this frame's steps, handed to the owner after stepping (kg*cm/s). */
-		FVector FrameImpulseKgCmS = FVector::ZeroVector;
-		EElementalSubstance SubstanceAtFrameStart = EElementalSubstance::None;
-		uint32 Serial = 0;
-		bool bOwned = false;
-		bool bDepleted = false;
-		bool bDepletionReported = false;
-	};
-
-	struct FBroadphaseEntry
-	{
-		int32 Index = INDEX_NONE;
-		double Min = 0.0;
-		double Max = 0.0;
-	};
-
-	struct FReactionEventKey
-	{
-		FElementalVolumeHandle A;
-		FElementalVolumeHandle B;
-		EElementalReactionType Type = EElementalReactionType::None;
-
-		bool operator==(const FReactionEventKey& Other) const { return A == Other.A && B == Other.B && Type == Other.Type; }
-
-		friend uint32 GetTypeHash(const FReactionEventKey& Key)
-		{
-			return HashCombine(HashCombine(GetTypeHash(Key.A), GetTypeHash(Key.B)), ::GetTypeHash(static_cast<uint8>(Key.Type)));
-		}
-	};
-
-	void StepSimulation(double DeltaSeconds);
+	void ApplySettings();
+	void RegisterBuiltInReactions();
 	void SyncFromOwners(double FrameSeconds);
 	void SyncToOwners();
-	void UpdateDerivedShapes();
-	void FindAndResolveContacts(double DeltaSeconds);
-	bool ComputeContact(const FElementalVolumeState& A, const FElementalVolumeState& B, FElementalContact& OutContact) const;
-	void DispatchReactions(int32 IndexA, int32 IndexB, const FElementalContact& Contact, double DeltaSeconds);
-	void ExchangeHeatWithAmbient(double DeltaSeconds);
-	void UpdateMoisturePatches(double DeltaSeconds);
-	void IntegrateImpulses();
-	void IntegrateFreeVolumes(double DeltaSeconds);
-	void ProcessFreeVolumeSpawns();
-	void ResolveDepletion();
-	void FlushEvents(double FrameSeconds);
-	void RecordPhaseChange(int32 Index, const FElementalPhaseChange& Change);
-	void AccumulateEvent(const FReactionEventKey& Key, EElementalSubstance SubstanceA, EElementalSubstance SubstanceB,
-		const FVector& LocationCm, const FVector& Normal, double MassKg, double EnergyJ);
-	void AddDiscreteEvent(EElementalReactionType Type, int32 Index, double MassKg, double EnergyJ);
-	void RegisterBuiltInReactions();
+	void BroadcastEvents(double FrameSeconds);
 	void DrawDebug() const;
 
-	[[nodiscard]] FElementalVolumeHandle MakeHandle(int32 Index) const;
-	[[nodiscard]] FVolumeSlot* FindSlot(FElementalVolumeHandle Handle);
-	[[nodiscard]] const FVolumeSlot* FindSlot(FElementalVolumeHandle Handle) const;
+	TUniquePtr<BendingSim::FSimWorld> SimWorld;
 
-	TSparseArray<FVolumeSlot> Volumes;
-	uint32 NextSerial = 1;
-	int32 NumFreeVolumes = 0;
+	/** Owner per kernel slot index. */
+	TArray<TWeakObjectPtr<UElementalVolumeComponent>> OwnerBySlot;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UElementalReactionSet> ReactionSet;
 
-	/** Keeps reactions alive; ReactionTable holds raw pointers into it keyed by substance pair. */
+	/** Keeps reaction objects alive; the kernel holds raw pointers to them. */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UElementalReaction>> Reactions;
-
-	TMap<uint16, TArray<UElementalReaction*, TInlineAllocator<2>>> ReactionTable;
-
-	TArray<FBroadphaseEntry> BroadphaseScratch;
-	TArray<FElementalVolumeState> PendingFreeVolumes;
-	TMap<FReactionEventKey, FElementalReactionEvent> PendingEvents;
-	TArray<FElementalReactionEvent> DiscreteEvents;
-	TArray<TPair<FElementalVolumeHandle, EElementalSubstance>> SpawnedFreeVolumes;
-	TArray<TPair<FElementalVolumeHandle, EElementalSubstance>> RemovedFreeVolumes;
-	TArray<FSurfaceMoisturePatch> MoisturePatches;
-
-	double StepAccumulator = 0.0;
-	double EventWindowSeconds = 0.0;
 };

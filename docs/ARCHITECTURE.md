@@ -51,7 +51,7 @@ back to gameplay without frames of latency.
 
 `Physics/BendingUnits.h` is the single place conversions happen.
 
-- **Engine units** for anything passed straight to engine APIs: cm, cm/s, kg·cm/s (the unit `AddImpulse` expects). Field names carry `Cm`, `CmS`, `KgCmS`.
+- **Engine units** for positions, velocities and impulses, in the kernel too, so nothing is converted on the way to `AddImpulse`: cm, cm/s, kg·cm/s. Field names carry `Cm`, `CmS`, `KgCmS`.
 - **SI** for every physical-model quantity: kg, m, m/s, K, J, W, Pa, N.
 - Physical constants are code. Designer-facing knobs are explicit multipliers layered on top: `Strength` per reaction, `HeatTransferScale`, `DryingTimeScale`, chi exchange rates.
 
@@ -104,8 +104,34 @@ The function returns the joules actually granted: everything requested if afford
 
 ## Interaction simulation
 
+### Two layers: kernel and adapter
+
+```
+ Public/Sim/  namespace BendingSim          no engine headers, no STL, no libc, no allocation
+   BendingSimMath.h       FVec3, segment closest points, deterministic exp / cbrt
+   BendingThermo.h        sensible + latent heat, phase walk, equilibrium-capped heat flow
+   BendingSimTypes.h      substances and their real properties, FVolume, contacts, events, settings
+   BendingSimReactions.h  reaction rules (plain functions + parameter structs)
+   BendingSimWorld.h      FSimWorld: fixed-capacity slots, sweep-and-prune, fixed step, events, moisture
+
+ Interaction/ (UObject adapter)
+   UBendingInteractionSubsystem   owns one FSimWorld, syncs components in/out once per frame,
+                                  converts events to USTRUCTs, broadcasts delegates, debug draw
+   UElementalVolumeComponent      pushes transform/velocity, receives impulses, substance changes, depletion
+   UElementalReaction_*           editable UPROPERTY copies of the kernel parameter structs, forward to React*
+```
+
+The kernel holds all of the physics. It compiles with the plugin, with any desktop compiler on its own, and to
+freestanding WebAssembly, and the three builds produce bit-identical results. That is what makes it testable without
+the editor (see **Verification** below), and it is the same code that runs in the browser lab.
+
+- Capacity is fixed (`MaxVolumes` = 1024 slots). Handles are `{Index, Serial}`, so a stale handle to a reused slot is rejected.
+- Results are deterministic: same inputs, same bits. Floating-point contraction is disabled in the stand-alone builds.
+- Custom rules: subclass `UElementalReaction`, override `React(BendingSim::FReactionContext&)`, and add it to a
+  `UElementalReactionSet`. The context exposes both volumes, the contact, `EmitEvent` and `SpawnFreeVolume`.
+
 ### Volumes
-`FElementalVolumeState` holds substance (Earth, Water, Ice, Steam, Fire, Air), mass, temperature, banked latent heat, porosity and saturation (earth), drag coefficient, shape (sphere or capsule), location, and velocity.
+`BendingSim::FVolume` (mirrored for Blueprint as `FElementalVolumeState`) holds substance (Earth, Water, Ice, Steam, Fire, Air), mass, temperature, banked latent heat, porosity and saturation (earth), drag coefficient, shape (sphere or capsule), location, and velocity.
 - Gases can derive their radius from the ideal-gas law, so a flame **expands as it heats** and shrinks as it dies.
 - `UElementalVolumeComponent` attaches a volume to any actor. Every frame it pushes the component's transform and velocity into the simulation (physics body, finite difference, or manual). It receives back the accumulated impulse (applied to the attached simulating body), substance changes, and depletion. Activation registers and deactivation unregisters, so it works with pooled actors.
 
@@ -120,21 +146,25 @@ The function returns the joules actually granted: everything requested if afford
 8. Spawned free volumes merge into nearby ones of the same substance, conserving mass, momentum and heat, up to `MaxFreeVolumes`.
 9. Depletion: mass below the minimum, or a flame below `FireExtinguishTemperatureK`.
 
-Owners sync once per frame. Nothing inside the step touches UObjects, and every outward callback is deferred until the step completes.
+Owners sync once per frame. Nothing inside the step touches UObjects (the kernel cannot see them), and every outward
+callback is deferred until the step completes. Continuous events are aggregated per pair and flushed every
+`ReactionEventIntervalS`; discrete ones are flushed every frame.
 
 ### Thermodynamics kernel
-`Physics/ElementalThermoKernel.h` is engine-independent and unit-tested (`Tests/PhysicsKernel/run.sh`). It covers sensible heat, latent heat of fusion (334 kJ/kg) and vaporization (2.257 MJ/kg), the ice → water → steam walk, flash vaporization, equilibrium-limited heat flow, and mixing.
+`Sim/BendingThermo.h` covers sensible heat, latent heat of fusion (334 kJ/kg) and vaporization (2.257 MJ/kg), the ice → water → steam walk, flash vaporization, equilibrium-limited heat flow, and mixing.
 - A volume is one phase. Melting and freezing **bank latent heat** until the whole volume converts, like a block of ice sitting at 0 °C.
 - Boiling and condensation shed mass, because the vapor leaves.
+- Heat put into a flame (a firebender sustaining it, or combustion) is capped at the adiabatic flame temperature
+  (`MaxFlameTemperatureK`, 2300 K). `TransferHeat` reports the heat actually accepted, and chi is billed on that.
 
 ### The required reactions
 
 | Pair | Reaction class | Physics |
 |---|---|---|
 | **Fire + Water → Evaporation** | `UElementalReaction_HeatExchange` | `Q = h·A·ΔT·dt` (h = 2×10⁴ W/m²K, the nucleate-boiling range), capped so the gradient cannot invert. 60% of the heat flash-boils the contact layer into **steam**, spawned as a free volume. The water loses that mass, the flame loses that heat (and dies below 700 K). Inelastic momentum coupling drags the flame to the water's velocity: its kinetic force is damped. |
-| **Air + Fire → Oxygenation** | `UElementalReaction_Oxygenation` | Air inflow `ṁ = ρ·A·v_n` is entrained (mass, momentum and heat conserved) and burns at 3.03 MJ per kg of air (Thornton's rule) × efficiency. This is capped by a fuel limit and by the adiabatic flame temperature. The flame gets hotter and heavier, expands by the ideal-gas law, and is carried by the air's momentum: more range, more damage. |
-| **Water + Earth → Mud** | `UElementalReaction_Saturation` | The water's momentum shoves the earth. Pore absorption is `ρ_w·A·(K_infiltration + k·v_impact)`, limited by the pore volume (porosity × volume). The earth gets heavier and wetter, and passes a mud threshold. Terrain keeps `FSurfaceMoisturePatch`es (landscape cannot hold per-location physical materials at runtime), and `GetSurfaceTractionMultiplierAt` scales character friction, braking and acceleration. |
-| **Air + Earth → Deflection / Erosion** | `UElementalReaction_AeroDrag` | Drag `½ρC_dA|v|v` plus the **overpressure** of compressed air `(ρ/ρ₀ − 1)·P₀·A`, weighted to peak while the wave front crosses the body. Impulse `J`, `Δv = J/m`: a gust scatters pebbles and barely nudges a slab. The impulse is capped at a full inelastic merge so light bodies never overshoot the wind. Loose, dry earth erodes above a critical dynamic pressure. Newton's third law: the air loses the momentum. |
+| **Air + Fire → Oxygenation** | `UElementalReaction_Oxygenation` | Air inflow `ṁ = ρ·A·v_n` is entrained (mass, momentum and heat conserved) and burns at 3.03 MJ per kg of air (Thornton's rule) × efficiency (0.6: a luminous flame radiates the rest). This is capped by a fuel limit and by the adiabatic flame temperature. The flame gets hotter and heavier, expands by the ideal-gas law, and is carried by the air's momentum: more range, more damage. |
+| **Water + Earth → Mud** | `UElementalReaction_Saturation` | The water's momentum shoves the earth. Pore absorption is `ρ_w·A·(K_infiltration + k·v_impact)`, limited by the pore volume (porosity × volume). The earth gets heavier and wetter, and passes a mud threshold if it is porous enough (`MinMudPorosity`: wet granite stays granite). Terrain keeps `FSurfaceMoisturePatch`es (landscape cannot hold per-location physical materials at runtime), and `GetSurfaceTractionMultiplierAt` scales character friction, braking and acceleration. |
+| **Air + Earth → Deflection / Erosion** | `UElementalReaction_AeroDrag` | Quadratic drag `½ρC_dA|v|v` from the relative wind over the immersed part of the body. A bender's compressed air is denser, so it carries proportionally more momentum. Impulse `J`, `Δv = J/m`: the same blast reverses a pebble and barely slows a boulder. The impulse is capped at a full inelastic merge so light bodies never overshoot the wind. Loose, dry earth erodes above a critical dynamic pressure. Newton's third law: the air loses the momentum. |
 
 The built-in set also registers Fire + Ice (melting), Steam + Ice, Fire + Earth, and Air + Water / Ice / Steam (wind pushes water and clears steam clouds).
 
@@ -146,6 +176,32 @@ The built-in set also registers Fire + Ice (melting), Steam + Ice, Fire + Earth,
 `OnFreeVolumeSpawned` / `OnFreeVolumeRemoved` announce ownerless steam clouds so presentation can attach a pooled Niagara component to each.
 
 Debug: `Bending.Interaction.DebugDraw 1` draws every volume colored by substance, plus the moisture patches.
+
+## Verification
+
+`Tests/run_all.sh` builds the kernel with clang++ (`-Wall -Wextra -Werror -Wshadow`) and runs three suites.
+
+- **Thermodynamics & kernel math (35 checks):** heat capacities, latent-heat walks, flash boiling, equilibrium caps,
+  ideal-gas radius, `KExp`/`KCbrt` against libm, and segment closest points against brute force.
+- **Reaction scenarios (47 checks):** conservation unit tests (mass, momentum, heat, Δv ratios), then each scenario
+  driven by `Tools/SimDemo` the way an element actor would drive it. Two more checks cover determinism and performance.
+- **WebAssembly parity:** the freestanding wasm build replays every scenario and must match the native digest exactly.
+
+| Scenario | What happens (measured) |
+|---|---|
+| Evaporation | An 18 m/s fire blast into a held water wall: 82.5 g of water boils into steam, the blast slows to 11.9 m/s and goes out at 0.43 s, and the steam rises at 3.5 m/s. |
+| Oxygenation | At 0.9 s the fed flame is 1106 K against 748 K unfed. Its radius grows from 71 to 116 cm and it lasts 3.4 s instead of 1.1 s. It burns 1.42 kg of air, exactly the mass it gained. |
+| Mud | A splash on a soil clod: the soil absorbs 16.9 kg of water (saturation 0.64), turns to mud and is shoved 56 cm. Granite absorbs 0.38 kg. Ground traction drops to 0.35. |
+| Deflection | A compressed air jet reverses a 0.3 kg pebble from −15 to +9.6 m/s. A 1.4 t boulder only slows from −15 to −14.64 m/s. The bender pays 545 kJ (109 chi). |
+| Freeze | Freezing a 12 kg water whip costs exactly `m(cΔT + L_f)` = 4.76 MJ (47.6 chi). A fire blast then gets the ice only 4.1% of the way to melting and goes out. |
+| Drying | A sustained flame dries 18 kg of mud: traction recovers from 0.39 to 1.00 by 3.7 s, for 55.7 MJ (557 chi), and the flame never exceeds 2300 K. |
+| Performance | 900 interacting volumes step in about 0.4 ms (3,212 reacting contacts per step). |
+
+**Bending Physics Lab.** `Tools/SimDemo/build_sandbox.sh` writes `Tools/SimDemo/build/BendingLab.html`, a single
+self-contained page that embeds the kernel as WebAssembly (about 120 KB). It provides:
+- the scenarios, with pause, frame step, restart and slow motion, plus a sandbox where you drag to throw fire, water, earth and air, and freeze or heat what you hit;
+- live per-volume state, a chart of each scenario's key quantity, a reaction log with totals, the ground traction gauge and the bender's chi bill;
+- sliders for the reaction parameters.
 
 ## Open world
 
@@ -176,7 +232,7 @@ The GAS layer is network-shaped: abilities are `LocalPredicted`, the ability sys
 This code was written without compiling against the engine. Expect a short round of fixes on the first build.
 
 1. Install UE 5.8, right-click `Avatar.uproject` → *Generate project files*, then build `AvatarEditor` (Development Editor).
-2. Run `Tests/PhysicsKernel/run.sh` any time the kernel changes.
+2. Run `Tests/run_all.sh` any time the kernel changes.
 3. In the editor, create:
    - input actions and a mapping context;
    - a `BendingInputConfig`;

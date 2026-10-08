@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Physics/ElementalSubstance.h"
+#include "Sim/BendingSimTypes.h"
 #include "ElementalVolumeTypes.generated.h"
 
 UENUM(BlueprintType)
@@ -38,6 +39,11 @@ enum class EElementalReactionType : uint8
 	Extinguished
 };
 
+static_assert(static_cast<int>(EElementalReactionType::Extinguished) == static_cast<int>(BendingSim::EReactionType::Extinguished),
+	"Reaction type mirror out of sync with BendingSim::EReactionType");
+static_assert(static_cast<int>(EElementalVolumeShape::Capsule) == static_cast<int>(BendingSim::EShape::Capsule),
+	"Shape mirror out of sync with BendingSim::EShape");
+
 /** Stable reference to a volume in UBendingInteractionSubsystem. Serial guards against slot reuse. */
 USTRUCT(BlueprintType)
 struct BENDING_API FElementalVolumeHandle
@@ -60,6 +66,19 @@ struct BENDING_API FElementalVolumeHandle
 		return HashCombine(::GetTypeHash(Handle.Index), ::GetTypeHash(Handle.Serial));
 	}
 
+	[[nodiscard]] BendingSim::FHandle ToSim() const
+	{
+		BendingSim::FHandle Sim;
+		Sim.Index = Index;
+		Sim.Serial = Serial;
+		return Sim;
+	}
+
+	[[nodiscard]] static FElementalVolumeHandle FromSim(const BendingSim::FHandle& Sim)
+	{
+		return Sim.IsSet() ? FElementalVolumeHandle(Sim.Index, Sim.Serial) : FElementalVolumeHandle();
+	}
+
 private:
 	// Reflected so Blueprint equality and reflected containers compare handles by value.
 	UPROPERTY()
@@ -70,7 +89,8 @@ private:
 };
 
 /**
- * The simulated body of a bent element: what gameplay and reactions reason about.
+ * Reflected mirror of BendingSim::FVolume, the simulated body of bent matter, for Blueprint and the editor
+ * (UElementalVolumeComponent::InitialState). The simulation itself runs on BendingSim::FVolume.
  * Niagara only renders this; it never decides outcomes.
  *
  * Matter quantities are SI. Shape and kinematics are engine units (cm, cm/s) because they feed engine APIs.
@@ -138,34 +158,11 @@ struct BENDING_API FElementalVolumeState
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Kinematics")
 	FVector VelocityCmS = FVector::ZeroVector;
 
-	/** Impulse (kg*cm/s) reactions accumulated this step; the subsystem integrates it into velocity and the owner. */
-	FVector PendingImpulseKgCmS = FVector::ZeroVector;
-
 	/** Real-world defaults for a substance: temperature, drag, porosity, and a radius matching the mass. */
 	[[nodiscard]] static FElementalVolumeState MakeDefault(EElementalSubstance InSubstance, double InMassKg);
 
-	[[nodiscard]] const FElementalSubstanceProperties& GetProperties() const;
-	[[nodiscard]] bool IsGas() const;
-	[[nodiscard]] double GetSpecificHeat() const;
-	[[nodiscard]] double GetHeatCapacityJPerK() const;
-
-	/** Volume (m^3) of the shape. */
-	[[nodiscard]] double GetGeometricVolumeM3() const;
-	/** Density (kg/m^3): ideal gas for free gases, mass / shape volume for compressed gas, reference density otherwise. */
-	[[nodiscard]] double GetDensityKgM3() const;
-	/** 0 for immovable or massless volumes. */
-	[[nodiscard]] double GetInverseMass() const;
-	[[nodiscard]] double GetSurfaceAreaM2() const;
-	/** Projected area facing a flow (m^2); capsules assume a side-on worst case. */
-	[[nodiscard]] double GetFrontalAreaM2() const;
-	[[nodiscard]] double GetKineticEnergyJ() const;
-
-	[[nodiscard]] FVector GetSegmentStartCm() const;
-	[[nodiscard]] FVector GetSegmentEndCm() const;
-	[[nodiscard]] double GetBoundingRadiusCm() const;
-
-	/** Recomputes RadiusCm from mass and density when bDeriveRadiusFromMass is set on a sphere. */
-	void UpdateDerivedRadius();
+	[[nodiscard]] BendingSim::FVolume ToSim() const;
+	[[nodiscard]] static FElementalVolumeState FromSim(const BendingSim::FVolume& Volume);
 };
 
 /** What a heat transfer did to a volume's phase. */
@@ -189,41 +186,15 @@ struct BENDING_API FElementalPhaseChange
 	UPROPERTY(BlueprintReadOnly, Category = "Phase Change")
 	bool bSubstanceChanged = false;
 
-	FElementalPhaseChange& operator+=(const FElementalPhaseChange& Other)
+	[[nodiscard]] static FElementalPhaseChange FromSim(const BendingSim::Thermo::FPhaseChangeResult& Result)
 	{
-		MeltedKg += Other.MeltedKg;
-		FrozenKg += Other.FrozenKg;
-		VaporizedKg += Other.VaporizedKg;
-		CondensedKg += Other.CondensedKg;
-		bSubstanceChanged = bSubstanceChanged || Other.bSubstanceChanged;
-		return *this;
-	}
-};
-
-/** Narrow-phase result for one overlapping pair, oriented from volume A to volume B. */
-struct FElementalContact
-{
-	/** Midpoint of the overlap region (cm, world). */
-	FVector PointCm = FVector::ZeroVector;
-	/** Unit normal from A toward B. */
-	FVector NormalAB = FVector::UpVector;
-	double PenetrationCm = 0.0;
-	/** Surface of the smaller volume lying inside the larger (m^2): the area that exchanges heat and mass. */
-	double ExchangeAreaM2 = 0.0;
-	/** Fraction of A's / B's surface inside the other volume (0..1). */
-	double ImmersionA = 0.0;
-	double ImmersionB = 0.0;
-	/** Penetration relative to the smaller diameter (0..1): how deeply the two are mixed. */
-	double OverlapFraction = 0.0;
-
-	/** Mirror for when a reaction expects the pair in the opposite order. */
-	[[nodiscard]] FElementalContact Flipped() const
-	{
-		FElementalContact Out = *this;
-		Out.NormalAB = -NormalAB;
-		Out.ImmersionA = ImmersionB;
-		Out.ImmersionB = ImmersionA;
-		return Out;
+		FElementalPhaseChange Change;
+		Change.MeltedKg = Result.MeltedKg;
+		Change.FrozenKg = Result.FrozenKg;
+		Change.VaporizedKg = Result.VaporizedKg;
+		Change.CondensedKg = Result.CondensedKg;
+		Change.bSubstanceChanged = Result.bPhaseChanged;
+		return Change;
 	}
 };
 
@@ -274,4 +245,10 @@ struct BENDING_API FElementalReactionEvent
 
 	UPROPERTY(BlueprintReadOnly, Category = "Reaction")
 	float WindowSeconds = 0.f;
+
+	/** One-off transition (melting, freezing, extinguished) rather than an aggregated continuous reaction. */
+	UPROPERTY(BlueprintReadOnly, Category = "Reaction")
+	bool bDiscrete = false;
+
+	[[nodiscard]] static FElementalReactionEvent FromSim(const BendingSim::FReactionEvent& Event);
 };

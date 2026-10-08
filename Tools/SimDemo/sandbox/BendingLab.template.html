@@ -1,0 +1,1013 @@
+<title>Bending Physics Lab</title>
+<meta name="description" content="The Avatar bending plugin's C++ simulation kernel, compiled to WebAssembly and running live.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: a lab instrument. The arena is the hero; scenario rack docked right; live readouts in a grid below. */
+  :root {
+    --bg: #eef1f4;
+    --panel: #ffffff;
+    --panel-2: #f5f7f9;
+    --ink: #17212c;
+    --muted: #5a6776;
+    --rule: #d6dde4;
+    --accent: #0d7a72;
+    --accent-ink: #ffffff;
+    --accent-soft: #d8efec;
+    --sky-top: #c9dceb;
+    --sky-bottom: #eef3f7;
+    --ground-top: #8b6a46;
+    --ground-bottom: #5f4630;
+    --mud: #3a2a1c;
+    --grid: rgba(23, 33, 44, 0.14);
+    --label-bg: rgba(255, 255, 255, 0.86);
+    --label-ink: #17212c;
+    --good: #15803d;
+    --warn: #b45309;
+    --crit: #b91c1c;
+    --series-1: #0d7a72;
+    --series-2: #c2410c;
+    --series-3: #4f46e5;
+    --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --font-body: "Barlow", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e141a; --panel: #141c24; --panel-2: #18222c; --ink: #e5ecf2; --muted: #93a2b1; --rule: #26323f;
+      --accent: #2fb5a8; --accent-ink: #04201d; --accent-soft: #11312e;
+      --sky-top: #08121c; --sky-bottom: #162433; --ground-top: #5e4831; --ground-bottom: #3b2c1d; --mud: #22180f;
+      --grid: rgba(229, 236, 242, 0.11); --label-bg: rgba(14, 20, 26, 0.82); --label-ink: #e5ecf2;
+      --good: #4ade80; --warn: #f59e0b; --crit: #f87171;
+      --series-1: #2fb5a8; --series-2: #fb923c; --series-3: #a5b4fc;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e141a; --panel: #141c24; --panel-2: #18222c; --ink: #e5ecf2; --muted: #93a2b1; --rule: #26323f;
+    --accent: #2fb5a8; --accent-ink: #04201d; --accent-soft: #11312e;
+    --sky-top: #08121c; --sky-bottom: #162433; --ground-top: #5e4831; --ground-bottom: #3b2c1d; --mud: #22180f;
+    --grid: rgba(229, 236, 242, 0.11); --label-bg: rgba(14, 20, 26, 0.82); --label-ink: #e5ecf2;
+    --good: #4ade80; --warn: #f59e0b; --crit: #f87171;
+    --series-1: #2fb5a8; --series-2: #fb923c; --series-3: #a5b4fc;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--ink); }
+  body { font-family: var(--font-body); font-size: 15px; line-height: 1.5; padding-inline: 16px; padding-block: 18px 40px; }
+  .wrap { max-width: 1320px; margin: 0 auto; display: grid; gap: 16px; }
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.01em; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.05; }
+  h2 { font-size: 19px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+  p { margin: 0; }
+  .mono, td.num, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  header.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+  header.top .lede { max-width: 70ch; color: var(--muted); margin-top: 6px; }
+  .proof { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--rule); background: var(--panel); font-size: 13px; white-space: nowrap; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+  .chip.wait .dot { background: var(--warn); }
+
+  .lab { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+  @media (max-width: 980px) { .lab { grid-template-columns: minmax(0, 1fr); } }
+
+  .stage { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; min-width: 0; }
+  .stage-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--rule); }
+  .stage-head .title { min-width: 0; }
+  .stage-head h3 { font-size: 22px; }
+  .clock { font-family: var(--font-mono); font-size: 13px; color: var(--muted); }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .btn { border: 1px solid var(--rule); background: var(--panel-2); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 500; line-height: 1.2; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); min-width: 84px; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: var(--panel-2); padding: 6px 10px; cursor: pointer; font-family: var(--font-mono); font-size: 13px; }
+  .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .arena-wrap { position: relative; }
+  canvas#arena { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; background: var(--sky-bottom); }
+  .overlay { position: absolute; inset: auto 12px 12px auto; display: flex; gap: 8px; align-items: center; background: var(--label-bg); color: var(--label-ink); border: 1px solid var(--rule); border-radius: 8px; padding: 6px 8px 6px 12px; font-size: 14px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--rule); align-items: center; }
+  .toolbar .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-right: 4px; }
+  .tool { border: 1px solid var(--rule); background: var(--panel-2); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+  .tool .sw { width: 9px; height: 9px; border-radius: 50%; }
+  .tool[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .hint { padding: 0 14px 12px; color: var(--muted); font-size: 13px; min-height: 1.5em; }
+  .hint strong { color: var(--ink); font-weight: 600; }
+
+  aside.rack { display: grid; gap: 12px; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px; display: grid; gap: 10px; min-width: 0; align-content: start; }
+  .scenarios { display: grid; gap: 4px; }
+  .scenario { text-align: left; border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 7px 10px; cursor: pointer; display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: baseline; }
+  .scenario:hover { background: var(--panel-2); }
+  .scenario[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .scenario .n { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+  .scenario .name { font-weight: 600; font-size: 14px; }
+  .summary { color: var(--muted); font-size: 14px; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .big { font-family: var(--font-display); font-size: 30px; font-weight: 600; line-height: 1; }
+  .gauge { height: 8px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--rule); overflow: hidden; }
+  .gauge > i { display: block; height: 100%; background: var(--accent); width: 100%; transition: width 0.2s; }
+
+  .readouts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .readouts { grid-template-columns: minmax(0, 1fr); } }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 6px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td.num, th.num { text-align: right; }
+  .sub { display: inline-flex; align-items: center; gap: 6px; }
+  .sub i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .empty { color: var(--muted); font-size: 13px; }
+  canvas#chart { width: 100%; height: 210px; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  ol.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 260px; overflow-y: auto; font-size: 13px; }
+  ol.log li { display: grid; grid-template-columns: 54px 1fr; gap: 8px; padding: 4px 6px; border-radius: 6px; }
+  ol.log li.discrete { background: var(--accent-soft); }
+  ol.log .t { font-family: var(--font-mono); color: var(--muted); }
+  ol.log b { font-weight: 600; }
+  .totals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .params { display: grid; gap: 10px; }
+  .param { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; font-size: 13px; }
+  .param label { color: var(--ink); }
+  .param output { font-family: var(--font-mono); color: var(--muted); }
+  .param input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+  .param small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+  footer { color: var(--muted); font-size: 14px; display: grid; gap: 8px; max-width: 90ch; }
+  footer code { font-family: var(--font-mono); font-size: 12.5px; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 0 4px; }
+  @media (prefers-reduced-motion: reduce) { .gauge > i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Bending Physics Lab</h1>
+      <p class="lede">The simulation kernel from the Avatar bending plugin: the same C++ that the Unreal subsystem runs, compiled to WebAssembly. Matter has mass, temperature and momentum in real units, and elements react by exchanging them.</p>
+    </div>
+    <div class="proof" aria-label="Verification">
+      <span class="chip wait" id="kernel-chip"><span class="dot"></span><span id="kernel-status">Loading kernel</span></span>
+      <span class="chip"><span class="dot"></span>88 checks passing</span>
+      <span class="chip"><span class="dot"></span>Bit-identical to native</span>
+    </div>
+  </header>
+
+  <div class="lab">
+    <section class="stage" aria-label="Simulation">
+      <div class="stage-head">
+        <div class="title">
+          <h3 id="scenario-title">Fire vs water: evaporation</h3>
+          <div class="clock" id="clock">t = 0.00 s</div>
+        </div>
+        <div class="controls">
+          <button class="btn primary" id="play" type="button">Pause</button>
+          <button class="btn" id="step" type="button" title="Advance one 1/60 s frame">Step</button>
+          <button class="btn" id="restart" type="button">Restart</button>
+          <div class="seg" role="group" aria-label="Playback speed">
+            <button type="button" data-speed="0.25" aria-pressed="false">¼×</button>
+            <button type="button" data-speed="0.5" aria-pressed="false">½×</button>
+            <button type="button" data-speed="1" aria-pressed="true">1×</button>
+          </div>
+        </div>
+      </div>
+      <div class="arena-wrap">
+        <canvas id="arena" aria-label="Side view of the arena: volumes of fire, water, ice, steam, earth and air drawn to scale in metres"></canvas>
+        <div class="overlay" id="end-overlay" hidden>
+          <span>End of scenario</span>
+          <button class="btn" id="replay" type="button">Replay</button>
+          <button class="btn" id="continue" type="button">Keep running</button>
+        </div>
+      </div>
+      <div class="toolbar" role="group" aria-label="Bending tools">
+        <span class="label">Bend</span>
+        <button class="tool" type="button" data-tool="inspect" aria-pressed="true">Inspect</button>
+        <button class="tool" type="button" data-tool="0"><span class="sw" style="background:#ff7a1a"></span>Fire blast</button>
+        <button class="tool" type="button" data-tool="1"><span class="sw" style="background:#2f7fd8"></span>Water blob</button>
+        <button class="tool" type="button" data-tool="4"><span class="sw" style="background:#9fd3e6"></span>Air jet</button>
+        <button class="tool" type="button" data-tool="2"><span class="sw" style="background:#8a5a32"></span>Soil boulder</button>
+        <button class="tool" type="button" data-tool="3"><span class="sw" style="background:#7d8088"></span>Granite</button>
+        <button class="tool" type="button" data-tool="7"><span class="sw" style="background:#9a9ca3"></span>Pebble</button>
+        <button class="tool" type="button" data-tool="5"><span class="sw" style="background:#1f5fa8"></span>Water wall</button>
+        <button class="tool" type="button" data-tool="6"><span class="sw" style="background:#ffb347"></span>Held flame</button>
+        <button class="tool" type="button" data-tool="freeze"><span class="sw" style="background:#c9f0ff"></span>Freeze</button>
+        <button class="tool" type="button" data-tool="heat"><span class="sw" style="background:#ff4d2e"></span>Heat</button>
+      </div>
+      <p class="hint" id="hint" aria-live="polite">Hover a volume to read its state. Pick a tool, then drag in the arena: where you press is where it spawns, the drag sets its velocity.</p>
+    </section>
+
+    <aside class="rack">
+      <div class="card">
+        <h2>Scenarios</h2>
+        <div class="scenarios" id="scenarios" role="list"></div>
+        <p class="summary" id="summary"></p>
+      </div>
+      <div class="card">
+        <h2>Bender's work</h2>
+        <div class="big mono" id="chi">0 chi</div>
+        <dl class="kv">
+          <dt>Heat added or extracted</dt><dd id="w-thermal">0 J</dd>
+          <dt>Kinetic energy given</dt><dd id="w-kinetic">0 J</dd>
+        </dl>
+        <p class="summary">Priced at the plugin defaults: 100 kJ of heat or 5 kJ of motion per point of chi.</p>
+      </div>
+      <div class="card">
+        <h2>Ground traction</h2>
+        <div class="kv"><dt id="traction-where">At arena centre</dt><dd id="traction-val">1.00</dd></div>
+        <div class="gauge" aria-hidden="true"><i id="traction-bar"></i></div>
+        <p class="summary">Friction multiplier for anyone standing there. Saturated mud drops it to 0.35.</p>
+      </div>
+    </aside>
+  </div>
+
+  <div class="readouts">
+    <section class="card" aria-labelledby="h-volumes">
+      <h2 id="h-volumes">Volumes</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Volume</th><th class="num">Mass</th><th class="num">Temp</th><th class="num">Speed</th><th class="num">Radius</th><th class="num">State</th></tr></thead>
+          <tbody id="vol-body"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="card" aria-labelledby="h-chart">
+      <h2 id="h-chart">Chart</h2>
+      <canvas id="chart" aria-label="Time series of the scenario's key quantity"></canvas>
+      <div class="legend" id="legend"></div>
+    </section>
+    <section class="card" aria-labelledby="h-log">
+      <h2 id="h-log">Reactions</h2>
+      <div class="totals" id="totals"></div>
+      <ol class="log" id="log"></ol>
+    </section>
+    <section class="card" aria-labelledby="h-params">
+      <h2 id="h-params">Physics parameters</h2>
+      <div class="params" id="params"></div>
+      <div><button class="btn" id="reset-params" type="button">Reset to defaults</button></div>
+    </section>
+  </div>
+
+  <footer>
+    <p><strong>How it works.</strong> Every bent thing is a volume with mass (kg), temperature (K) and velocity. Each 1/60 s step, overlapping volumes exchange heat (Q = h·A·ΔT·dt, with ice→water→steam phase changes), momentum (drag ½ρC<sub>d</sub>A|v|v, inelastic coupling) and mass (steam boiling off, air entrained into flame, water soaking into soil), and nothing is created or destroyed. Steam rises by buoyancy and condenses; wet ground loses traction until it dries.</p>
+    <p>Source: kernel in <code>Plugins/Bending/Source/Bending/Public/Sim</code>, scenarios in <code>Tools/SimDemo/BendingSimDemo.cpp</code>, tests in <code>Tests/run_all.sh</code>.</p>
+  </footer>
+</div>
+
+<script>
+"use strict";
+const WASM_B64 = "__WASM_BASE64__";
+
+const SUBSTANCES = ["None", "Earth", "Water", "Ice", "Steam", "Fire", "Air"];
+const REACTIONS = ["None", "Evaporation", "Condensation", "Melting", "Freezing", "Oxygenation", "Saturation", "Mud formed", "Deflection", "Erosion", "Extinguished"];
+const SUB_COLOR = { 1: "#8a5a32", 2: "#2f7fd8", 3: "#bfe9f7", 4: "#d9dde2", 5: "#ff7a1a", 6: "#9fd3e6" };
+const VSTRIDE = 20, ESTRIDE = 12, PSTRIDE = 6;
+const FRAME = 1 / 60;
+const GROUND_FRACTION = 0.88; // where z = 0 sits, as a fraction of canvas height
+// Camera framing per scenario (cm): horizontal extent and the height that must stay visible.
+const VIEWS = {
+  0: { x0: -650, x1: 550, zTop: 420 },
+  1: { x0: -700, x1: 700, zTop: 450 },
+  2: { x0: -800, x1: 600, zTop: 380 },
+  3: { x0: -700, x1: 1000, zTop: 720 },
+  4: { x0: -800, x1: 500, zTop: 450 },
+  5: { x0: -550, x1: 550, zTop: 520 },
+  6: { x0: -1100, x1: 1100, zTop: 860 },
+};
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const PARAMS = [
+  { id: 0, name: "Ambient temperature", min: 250, max: 320, step: 1, def: 288.15, fmt: v => `${v.toFixed(0)} K`, note: "Air the volumes exchange heat with." },
+  { id: 1, name: "Heat transfer scale", min: 0, max: 3, step: 0.05, def: 1, fmt: v => `${v.toFixed(2)}×`, note: "Gameplay multiplier on every reaction heat flow." },
+  { id: 2, name: "Surface flash fraction", min: 0, max: 1, step: 0.05, def: 0.6, fmt: v => v.toFixed(2), note: "Share of flame heat that flash-boils water's surface." },
+  { id: 3, name: "Combustion efficiency", min: 0, max: 1, step: 0.05, def: 0.6, fmt: v => v.toFixed(2), note: "Share of 3.03 MJ/kg air the flame keeps." },
+  { id: 4, name: "Impact absorption", min: 0, max: 0.5, step: 0.01, def: 0.12, fmt: v => v.toFixed(2), note: "How hard a splash forces water into soil pores." },
+  { id: 5, name: "Air drag strength", min: 0, max: 5, step: 0.1, def: 1, fmt: v => `${v.toFixed(1)}×`, note: "Multiplier on aerodynamic drag." },
+  { id: 6, name: "Drying time scale", min: 0, max: 100, step: 1, def: 30, fmt: v => `${v.toFixed(0)}×`, note: "Speed-up of natural evaporation from wet ground." },
+  { id: 7, name: "Mud friction ratio", min: 0.1, max: 1, step: 0.05, def: 0.35, fmt: v => v.toFixed(2), note: "Friction of saturated mud relative to dry soil." },
+  { id: 8, name: "Ground porosity", min: 0, max: 0.5, step: 0.01, def: 0.35, fmt: v => v.toFixed(2), note: "0 = rock (sheds water), 0.35 = soil." },
+];
+
+const CHARTS = {
+  0: { title: "Temperature (K)", series: [{ label: "Fire blast", pick: v => byLabel(v, "Fire blast")?.T }, { label: "Water wall", pick: v => byLabel(v, "Water wall")?.T }] },
+  1: { title: "Flame temperature (K)", series: [{ label: "Fire alone", pick: v => byLabel(v, "Fire alone")?.T }, { label: "Fire fed by air", pick: v => byLabel(v, "Fire fed by air")?.T }] },
+  2: { title: "Pore saturation (0–1)", series: [{ label: "Soil clod", pick: v => byLabel(v, "Soil clod")?.sat }, { label: "Granite", pick: v => byLabel(v, "Granite")?.sat }] },
+  3: { title: "Velocity, + is away from the airbender (m/s)", series: [{ label: "Pebble 0.3 kg", pick: v => byLabel(v, "Pebble") && byLabel(v, "Pebble").vx / 100 }, { label: "Boulder 1400 kg", pick: v => byLabel(v, "Boulder") && byLabel(v, "Boulder").vx / 100 }] },
+  4: { title: "Temperature (K)", series: [{ label: "Water whip", pick: v => byLabel(v, "Water whip")?.T }, { label: "Fire blast", pick: v => byLabel(v, "Fire blast")?.T }] },
+  5: { title: "Traction at the mud (0–1) and flame temperature (kK)", series: [{ label: "Traction", pick: () => bs.bs_traction_at(0, 0) }, { label: "Flame (kK)", pick: v => { const f = byLabel(v, "Flame jet"); return f ? f.T / 1000 : undefined; } }] },
+  6: { title: "Mass in play (kg)", series: [{ label: "Water + ice", pick: v => sumMass(v, [2, 3]) }, { label: "Steam", pick: v => sumMass(v, [4]) }, { label: "Fire", pick: v => sumMass(v, [5]) }] },
+};
+
+let bs = null;
+const state = {
+  scenario: 0, duration: 6, playing: !REDUCED, speed: 1, acc: 0, frames: 0, ended: false, keepRunning: false,
+  volumes: [], patches: [], history: [], log: [], totals: {}, pops: [],
+  tool: "inspect", drag: null, hover: null, pointer: null, toast: "", toastUntil: 0,
+  params: Object.fromEntries(PARAMS.map(p => [p.id, p.def])), lastDom: 0,
+};
+
+// ------------------------------------------------------------------ kernel bridge
+
+function cstr(ptr) {
+  const bytes = new Uint8Array(bs.memory.buffer);
+  let end = ptr;
+  while (bytes[end] !== 0) end++;
+  return new TextDecoder().decode(bytes.subarray(ptr, end));
+}
+
+function readVolumes() {
+  const count = bs.bs_pack_volumes();
+  const buf = new Float64Array(bs.memory.buffer, bs.bs_volume_buffer(), count * VSTRIDE);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const o = i * VSTRIDE;
+    const actor = buf[o + 1];
+    const label = actor >= 0 ? cstr(bs.bs_actor_label(actor)) : undefined;
+    out.push({
+      slot: buf[o], actor, sub: buf[o + 2], mass: buf[o + 3], T: buf[o + 4], r: buf[o + 5],
+      x: buf[o + 6], z: buf[o + 8], vx: buf[o + 9], vz: buf[o + 11], sat: buf[o + 12], por: buf[o + 13],
+      owned: buf[o + 14] > 0, capsule: buf[o + 15] === 1, hx: buf[o + 16], hz: buf[o + 18], latent: buf[o + 19],
+      label: label || (buf[o + 2] === 4 ? "Steam cloud" : SUBSTANCES[buf[o + 2]]),
+    });
+  }
+  return out;
+}
+
+function readPatches() {
+  const count = bs.bs_pack_patches();
+  const buf = new Float64Array(bs.memory.buffer, bs.bs_patch_buffer(), count * PSTRIDE);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const o = i * PSTRIDE;
+    out.push({ x: buf[o], r: buf[o + 3], water: buf[o + 4], sat: buf[o + 5] });
+  }
+  return out;
+}
+
+const byLabel = (vols, label) => vols.find(v => v.label === label);
+const sumMass = (vols, subs) => vols.reduce((s, v) => s + (subs.includes(v.sub) ? v.mass : 0), 0);
+
+function applyParams() {
+  for (const p of PARAMS) bs.bs_set_param(p.id, state.params[p.id]);
+}
+
+function loadScenario(id) {
+  state.scenario = id;
+  bs.bs_load(id);
+  resizeArena();
+  applyParams();
+  state.duration = bs.bs_scenario_duration(id);
+  state.acc = 0; state.frames = 0; state.ended = false; state.keepRunning = false;
+  state.history = []; state.log = []; state.totals = {}; state.pops = [];
+  state.volumes = readVolumes(); state.patches = readPatches();
+  sample();
+  document.getElementById("scenario-title").textContent = cstr(bs.bs_scenario_name(id));
+  document.getElementById("summary").textContent = cstr(bs.bs_scenario_summary(id));
+  document.getElementById("end-overlay").hidden = true;
+  document.querySelectorAll(".scenario").forEach(b => b.setAttribute("aria-current", String(Number(b.dataset.id) === id)));
+  buildLegend();
+  updateDom(true);
+}
+
+function stepFrame() {
+  const n = bs.bs_advance(FRAME);
+  state.frames++;
+  const t = bs.bs_time();
+  if (n > 0) {
+    const buf = new Float64Array(bs.memory.buffer, bs.bs_event_buffer(), n * ESTRIDE);
+    for (let i = 0; i < n; i++) {
+      const o = i * ESTRIDE;
+      const ev = { t, type: buf[o], a: buf[o + 1], b: buf[o + 2], x: buf[o + 3], z: buf[o + 5], mass: buf[o + 6], energy: buf[o + 7], rate: buf[o + 8], power: buf[o + 9], discrete: buf[o + 10] > 0 };
+      recordEvent(ev);
+    }
+  }
+  state.volumes = readVolumes();
+  state.patches = readPatches();
+  if (state.frames % 2 === 0) sample();
+  if (!state.ended && !state.keepRunning && t >= state.duration - 1e-9) {
+    state.ended = true; state.playing = false;
+    document.getElementById("end-overlay").hidden = false;
+  }
+}
+
+function recordEvent(ev) {
+  const key = REACTIONS[ev.type];
+  const tot = state.totals[key] || (state.totals[key] = { mass: 0, energy: 0, count: 0 });
+  tot.mass += ev.mass; tot.energy += ev.energy; tot.count++;
+  state.log.unshift(ev);
+  if (state.log.length > 60) state.log.length = 60;
+  // One callout per reaction type every 0.45 s keeps continuous reactions readable; discrete ones always show.
+  const pop = popText(ev);
+  const wall = performance.now();
+  state.lastPop = state.lastPop || {};
+  if (pop && (ev.discrete || !(wall - (state.lastPop[key] || -1e9) < 450))) {
+    state.lastPop[key] = wall;
+    state.pops.push({ text: pop, x: ev.x, z: ev.z, born: wall });
+  }
+}
+
+function popText(ev) {
+  switch (REACTIONS[ev.type]) {
+    case "Evaporation": return ev.mass > 0.005 ? `steam +${fmtMass(ev.mass)}` : null;
+    case "Oxygenation": return `air burned ${fmtMass(ev.mass)}`;
+    case "Saturation": return ev.mass > 0.2 ? `soaked +${fmtMass(ev.mass)}` : null;
+    case "Mud formed": return "mud";
+    case "Extinguished": return "flame out";
+    case "Freezing": return "frozen";
+    case "Melting": return "melted";
+    case "Erosion": return ev.mass > 0.01 ? `eroded ${fmtMass(ev.mass)}` : null;
+    default: return null;
+  }
+}
+
+function sample() {
+  const chart = CHARTS[state.scenario];
+  const t = bs.bs_time();
+  state.history.push({ t, values: chart.series.map(s => { const v = s.pick(state.volumes); return Number.isFinite(v) ? v : null; }) });
+  if (state.history.length > 2000) state.history.splice(0, state.history.length - 2000);
+}
+
+// ------------------------------------------------------------------ formatting
+
+function fmtMass(kg) {
+  if (kg >= 100) return `${kg.toFixed(0)} kg`;
+  if (kg >= 1) return `${kg.toFixed(2)} kg`;
+  return `${(kg * 1000).toFixed(kg >= 0.01 ? 0 : 1)} g`;
+}
+function fmtEnergy(j) {
+  const a = Math.abs(j);
+  if (a >= 1e6) return `${(j / 1e6).toFixed(2)} MJ`;
+  if (a >= 1e3) return `${(j / 1e3).toFixed(1)} kJ`;
+  return `${j.toFixed(0)} J`;
+}
+function fmtPower(w) {
+  const a = Math.abs(w);
+  if (a >= 1e6) return `${(w / 1e6).toFixed(2)} MW`;
+  if (a >= 1e3) return `${(w / 1e3).toFixed(0)} kW`;
+  return `${w.toFixed(0)} W`;
+}
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+// ------------------------------------------------------------------ arena
+
+const arena = document.getElementById("arena");
+const ctx = arena.getContext("2d");
+const view = { w: 0, h: 0, scale: 1, ox: 0, oy: 0, dpr: 1 };
+
+function resizeArena() {
+  const rect = arena.getBoundingClientRect();
+  const cssW = Math.max(280, rect.width || arena.parentElement.clientWidth);
+  const cssH = Math.max(230, Math.round(cssW * 0.43));
+  view.dpr = Math.min(window.devicePixelRatio || 1, 2);
+  arena.width = Math.round(cssW * view.dpr);
+  arena.height = Math.round(cssH * view.dpr);
+  arena.style.height = `${cssH}px`;
+  view.w = cssW; view.h = cssH;
+  const frame = VIEWS[state.scenario] || VIEWS[6];
+  view.scale = Math.min(cssW / (frame.x1 - frame.x0), (cssH * GROUND_FRACTION) / frame.zTop);
+  view.ox = cssW / 2 - ((frame.x0 + frame.x1) / 2) * view.scale; view.oy = cssH * GROUND_FRACTION;
+}
+const sx = x => view.ox + x * view.scale;
+const sy = z => view.oy - z * view.scale;
+const wx = px => (px - view.ox) / view.scale;
+const wz = py => (view.oy - py) / view.scale;
+
+// Black-body colour for a temperature in kelvin (Tanner Helland's fit), used for flame.
+function blackbody(T) {
+  const t = Math.max(1000, Math.min(T, 12000)) / 100;
+  let r, g, b;
+  r = t <= 66 ? 255 : 329.7 * Math.pow(t - 60, -0.1332);
+  g = t <= 66 ? 99.47 * Math.log(t) - 161.12 : 288.12 * Math.pow(t - 60, -0.0755);
+  b = t >= 66 ? 255 : (t <= 19 ? 0 : 138.52 * Math.log(t - 10) - 305.04);
+  const dim = T < 1000 ? Math.max(0.35, T / 1000) : 1;
+  const c = v => Math.round(Math.max(0, Math.min(255, v)) * dim);
+  return [c(r), c(g), c(b)];
+}
+
+function drawArena(now) {
+  const dark = css("color-scheme") === "dark" || matchDark();
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  const { w, h } = view;
+
+  const sky = ctx.createLinearGradient(0, 0, 0, view.oy);
+  sky.addColorStop(0, css("--sky-top")); sky.addColorStop(1, css("--sky-bottom"));
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, view.oy);
+
+  // Grid: metres, with the ground at z = 0.
+  ctx.strokeStyle = css("--grid"); ctx.lineWidth = 1; ctx.fillStyle = css("--muted");
+  ctx.font = `11px ${css("--font-mono")}`;
+  const mLeft = Math.floor(wx(0) / 100), mRight = Math.ceil(wx(w) / 100);
+  for (let m = mLeft; m <= mRight; m++) {
+    const x = sx(m * 100);
+    ctx.beginPath(); ctx.moveTo(x, view.oy); ctx.lineTo(x, view.oy - (m % 5 === 0 ? 10 : 5)); ctx.stroke();
+  }
+  for (let m = 2; m * 100 * view.scale < view.oy - 14; m += 2) {
+    const y = sy(m * 100);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.fillText(`${m} m`, 6, y - 3);
+  }
+
+  const ground = ctx.createLinearGradient(0, view.oy, 0, h);
+  ground.addColorStop(0, css("--ground-top")); ground.addColorStop(1, css("--ground-bottom"));
+  ctx.fillStyle = ground; ctx.fillRect(0, view.oy, w, h - view.oy);
+  ctx.fillStyle = css("--label-ink"); ctx.globalAlpha = 0.75;
+  const labelStep = mRight - mLeft > 14 ? 5 : 1;
+  for (let m = Math.ceil(mLeft / labelStep) * labelStep; m <= mRight; m += labelStep) ctx.fillText(`${m} m`, sx(m * 100) + 3, view.oy + 14);
+  ctx.globalAlpha = 1;
+
+  // Wet ground: darker, glossier where saturated.
+  for (const p of state.patches) {
+    const x0 = sx(p.x - p.r), x1 = sx(p.x + p.r);
+    const g = ctx.createLinearGradient(x0, 0, x1, 0);
+    const a = Math.min(1, 0.25 + p.sat * 0.75);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(0.18, hexA(css("--mud"), a)); g.addColorStop(0.82, hexA(css("--mud"), a)); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fillRect(x0, view.oy - 2, x1 - x0, Math.max(6, (h - view.oy) * 0.45));
+    ctx.strokeStyle = `rgba(160,200,255,${0.25 + 0.5 * p.sat})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x0 + (x1 - x0) * 0.15, view.oy - 1); ctx.lineTo(x1 - (x1 - x0) * 0.15, view.oy - 1); ctx.stroke();
+  }
+
+  const order = [6, 4, 1, 2, 3, 5];
+  const vols = [...state.volumes].sort((a, b) => order.indexOf(a.sub) - order.indexOf(b.sub));
+  for (const v of vols) drawVolume(v, now, dark);
+
+  // Labels for named actors.
+  ctx.font = `600 12px ${css("--font-body")}`;
+  for (const v of vols) {
+    if (v.actor < 0 || v.sub === 6) continue;
+    const text = v.label;
+    const tw = ctx.measureText(text).width;
+    const x = Math.min(Math.max(sx(v.x) - tw / 2 - 6, 4), w - tw - 16);
+    const y = Math.max(sy(v.z + v.r) - 24, 4);
+    ctx.fillStyle = css("--label-bg"); roundRect(x, y, tw + 12, 18, 9); ctx.fill();
+    ctx.fillStyle = css("--label-ink"); ctx.fillText(text, x + 6, y + 13);
+  }
+
+  // Floating reaction callouts.
+  ctx.font = `600 12px ${css("--font-mono")}`;
+  state.pops = state.pops.filter(p => now - p.born < 1600);
+  const placed = [];
+  for (const p of state.pops) {
+    const age = (now - p.born) / 1600;
+    const x = sx(p.x) + 10;
+    let y = sy(p.z) + 4 - age * 14;
+    // Stack callouts that land on the same spot instead of overprinting them.
+    while (placed.some(q => Math.abs(q.x - x) < 90 && Math.abs(q.y - y) < 14)) y += 15;
+    placed.push({ x, y });
+    ctx.globalAlpha = 1 - age;
+    ctx.fillStyle = css("--label-ink");
+    ctx.fillText(p.text, x, y);
+  }
+  ctx.globalAlpha = 1;
+
+  // Aim arrow while dragging.
+  if (state.drag) {
+    const { x0, y0, x1, y1 } = state.drag;
+    ctx.strokeStyle = css("--accent"); ctx.fillStyle = css("--accent"); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x0, y0, 5, 0, Math.PI * 2); ctx.fill();
+    if (Math.hypot(x1 - x0, y1 - y0) > 4) {
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      const ang = Math.atan2(y1 - y0, x1 - x0);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - 10 * Math.cos(ang - 0.4), y1 - 10 * Math.sin(ang - 0.4)); ctx.lineTo(x1 - 10 * Math.cos(ang + 0.4), y1 - 10 * Math.sin(ang + 0.4)); ctx.closePath(); ctx.fill();
+      const v = dragVelocity();
+      ctx.font = `600 12px ${css("--font-mono")}`;
+      ctx.fillText(`${(Math.hypot(v.vx, v.vz) / 100).toFixed(1)} m/s`, x1 + 8, y1 - 8);
+    }
+  }
+  if (state.hover) {
+    ctx.strokeStyle = css("--accent"); ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.arc(sx(state.hover.x), sy(state.hover.z), Math.max(6, state.hover.r * view.scale + 4), 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function matchDark() {
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr) return attr === "dark";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function hexA(hex, a) {
+  const m = hex.replace("#", "");
+  const n = parseInt(m.length === 3 ? m.split("").map(c => c + c).join("") : m, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function shapePath(v, pad = 0) {
+  const r = Math.max(3, v.r * view.scale + pad);
+  ctx.beginPath();
+  if (v.capsule) {
+    const x0 = sx(v.x - v.hx), y0 = sy(v.z - v.hz), x1 = sx(v.x + v.hx), y1 = sy(v.z + v.hz);
+    const ang = Math.atan2(y1 - y0, x1 - x0);
+    ctx.arc(x1, y1, r, ang - Math.PI / 2, ang + Math.PI / 2);
+    ctx.arc(x0, y0, r, ang + Math.PI / 2, ang + Math.PI * 1.5);
+    ctx.closePath();
+  } else {
+    ctx.arc(sx(v.x), sy(v.z), r, 0, Math.PI * 2);
+  }
+}
+
+function drawVolume(v, now, dark) {
+  const cx = sx(v.x), cy = sy(v.z), r = Math.max(1.5, v.r * view.scale);
+  switch (v.sub) {
+    case 5: { // fire
+      const [R, G, B] = blackbody(v.T);
+      const flicker = REDUCED ? 1 : 1 + 0.06 * Math.sin(now / 70 + v.slot) + 0.04 * Math.sin(now / 37 + v.slot * 3);
+      const rr = r * flicker;
+      const g = ctx.createRadialGradient(cx, cy + rr * 0.15, rr * 0.05, cx, cy, rr);
+      const core = blackbody(Math.min(v.T * 1.35, 3000));
+      g.addColorStop(0, `rgba(${core[0]},${core[1]},${core[2]},0.95)`);
+      g.addColorStop(0.45, `rgba(${R},${G},${B},0.85)`);
+      g.addColorStop(1, `rgba(${R},${Math.round(G * 0.5)},0,0)`);
+      ctx.save();
+      if (dark) ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      break;
+    }
+    case 4: { // steam
+      const density = Math.min(1, v.mass / Math.max(0.05, (v.r / 100) ** 3 * 2.5));
+      const g = ctx.createRadialGradient(cx, cy, r * 0.1, cx, cy, r);
+      const tone = dark ? "236,240,244" : "104,116,130";
+      g.addColorStop(0, `rgba(${tone},${0.45 + 0.35 * density})`);
+      g.addColorStop(1, `rgba(${tone},0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 6: { // air: translucent body with streamlines along its velocity
+      shapePath(v);
+      ctx.fillStyle = dark ? "rgba(159,211,230,0.10)" : "rgba(80,150,190,0.10)"; ctx.fill();
+      ctx.strokeStyle = dark ? "rgba(159,211,230,0.55)" : "rgba(40,110,150,0.55)"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]);
+      const speed = Math.hypot(v.vx, v.vz);
+      if (speed > 50) {
+        const ux = v.vx / speed, uz = v.vz / speed, len = Math.min(r * 1.2, 50);
+        ctx.beginPath();
+        for (let k = -1; k <= 1; k++) {
+          const ox = -uz * k * r * 0.45, oz = ux * k * r * 0.45;
+          ctx.moveTo(cx + ox * 1 - ux * len * 0.5, cy - oz - (-uz) * len * 0.5);
+          ctx.lineTo(cx + ox + ux * len * 0.5, cy - oz - uz * len * 0.5);
+        }
+        ctx.stroke();
+      }
+      break;
+    }
+    case 2: { // water
+      shapePath(v);
+      const g = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, Math.max(r, 2));
+      g.addColorStop(0, "#6fb2f2"); g.addColorStop(1, "#1f5fa8");
+      ctx.fillStyle = v.capsule ? "#2f7fd8" : g; ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.45)"; ctx.lineWidth = 1; ctx.stroke();
+      break;
+    }
+    case 3: { // ice
+      shapePath(v);
+      ctx.fillStyle = "#cdeefa"; ctx.fill();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.strokeStyle = "rgba(90,160,200,0.7)"; ctx.lineWidth = 1; ctx.stroke();
+      break;
+    }
+    case 1: { // earth: soil warm brown, rock grey; water darkens it
+      const soil = v.por >= 0.2;
+      const base = soil ? [138, 90, 50] : [125, 128, 136];
+      const wet = Math.min(1, v.sat);
+      const k = 1 - 0.45 * wet * (soil ? 1 : 0.4);
+      shapePath(v);
+      ctx.fillStyle = `rgb(${Math.round(base[0] * k)},${Math.round(base[1] * k)},${Math.round(base[2] * k + wet * 10)})`;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1; ctx.stroke();
+      break;
+    }
+  }
+}
+
+// ------------------------------------------------------------------ interaction
+
+const TOOL_HINTS = {
+  inspect: "Hover a volume to read its state. Pick a tool, then drag in the arena: where you press is where it spawns, the drag sets its velocity.",
+  0: "<strong>Fire blast</strong>: 0.6 kg of 1500 K flame. Drag to throw it.",
+  1: "<strong>Water blob</strong>: 20 kg, falls under gravity and soaks into soil where it lands.",
+  2: "<strong>Soil boulder</strong>: 120 kg, porosity 0.42. Soaks up water and turns to mud.",
+  3: "<strong>Granite</strong>: 300 kg, porosity 0.01. Water just runs off.",
+  4: "<strong>Air jet</strong>: a 1.6 m column of air compressed 4×. Drag fast: drag depends on relative speed squared.",
+  5: "<strong>Water wall</strong>: 40 kg held in place by a waterbender. Click to place.",
+  6: "<strong>Held flame</strong>: 0.5 kg flame sustained by a firebender pouring in 1.5 MW. Click to place.",
+  7: "<strong>Pebble</strong>: 0.3 kg stone. Drag to throw.",
+  freeze: "<strong>Freeze</strong>: click near water. The waterbender extracts exactly the heat needed to freeze it solid.",
+  heat: "<strong>Heat</strong>: click near a volume to pour 500 kJ into it (melts ice, boils water, drives flame up to 2300 K).",
+};
+
+function setTool(tool) {
+  state.tool = tool;
+  document.querySelectorAll(".tool").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === tool)));
+  showHint(TOOL_HINTS[tool]);
+}
+
+function showHint(html, ms) {
+  const el = document.getElementById("hint");
+  el.innerHTML = html;
+  state.toastUntil = ms ? performance.now() + ms : 0;
+}
+
+function pointerPos(e) {
+  const rect = arena.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function dragVelocity() {
+  const d = state.drag;
+  // 1 m of drag in the arena = 3 m/s.
+  return { vx: (wx(d.x1) - wx(d.x0)) * 3, vz: (wz(d.y1) - wz(d.y0)) * 3 };
+}
+
+arena.addEventListener("pointerdown", e => {
+  if (!bs) return;
+  const p = pointerPos(e);
+  if (state.tool === "inspect") return;
+  if (state.tool === "freeze" || state.tool === "heat") {
+    const x = wx(p.x), z = wz(p.y);
+    if (state.tool === "freeze") {
+      const j = bs.bs_freeze_near(x, z, 200);
+      showHint(j > 0 ? `<strong>Froze it.</strong> Extracted ${fmtEnergy(j)} (${(j / 100000).toFixed(1)} chi).` : "No liquid water within 2 m of that point.", 4000);
+    } else {
+      const j = bs.bs_heat_near(x, z, 200, 500000);
+      showHint(j > 0 ? `<strong>Poured in ${fmtEnergy(j)}</strong> (${(j / 100000).toFixed(1)} chi).` : "Nothing within 2 m to heat (or the flame is already at 2300 K).", 4000);
+    }
+    state.volumes = readVolumes();
+    return;
+  }
+  arena.setPointerCapture(e.pointerId);
+  state.drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+});
+
+arena.addEventListener("pointermove", e => {
+  const p = pointerPos(e);
+  state.pointer = p;
+  if (state.drag) { state.drag.x1 = p.x; state.drag.y1 = p.y; }
+});
+
+arena.addEventListener("pointerleave", () => { state.pointer = null; });
+
+arena.addEventListener("pointerup", e => {
+  if (!state.drag || !bs) return;
+  const d = state.drag;
+  const v = dragVelocity();
+  let z = Math.max(wz(d.y0), 0);
+  const preset = Number(state.tool);
+  if ([1, 2, 3].includes(preset)) z = Math.max(z, 40);
+  const idx = bs.bs_spawn(preset, wx(d.x0), z, v.vx, v.vz);
+  state.drag = null;
+  if (idx < 0) showHint("The arena is full (128 actors). Restart the scenario to clear it.", 4000);
+  state.volumes = readVolumes();
+  arena.releasePointerCapture?.(e.pointerId);
+});
+
+function updateHover() {
+  if (!state.pointer || state.drag) { state.hover = null; return; }
+  const x = wx(state.pointer.x), z = wz(state.pointer.y);
+  let best = null, bestD = Infinity;
+  for (const v of state.volumes) {
+    const d = Math.hypot(v.x - x, v.z - z) - v.r;
+    if (d < bestD) { bestD = d; best = v; }
+  }
+  state.hover = best && bestD < 60 ? best : null;
+  if (state.tool === "inspect" && performance.now() > state.toastUntil) {
+    if (state.hover) {
+      const v = state.hover;
+      showHint(`<strong>${v.label}</strong> · ${SUBSTANCES[v.sub]} · ${fmtMass(v.mass)} · ${v.T.toFixed(0)} K (${(v.T - 273.15).toFixed(0)} °C) · ${(Math.hypot(v.vx, v.vz) / 100).toFixed(1)} m/s · r ${v.r.toFixed(0)} cm${v.sub === 1 ? ` · porosity ${v.por.toFixed(2)}, saturation ${v.sat.toFixed(2)}` : ""}`);
+    } else {
+      showHint(TOOL_HINTS.inspect);
+    }
+  }
+}
+
+// ------------------------------------------------------------------ readouts
+
+function updateDom(force) {
+  const now = performance.now();
+  if (!force && now - state.lastDom < 120) return;
+  state.lastDom = now;
+  const t = bs.bs_time();
+  document.getElementById("clock").textContent = state.duration < 1e8
+    ? `t = ${t.toFixed(2)} s of ${state.duration.toFixed(1)} s · ${plural(state.volumes.length, "volume")} · ${plural(bs.bs_contacts(), "reacting contact")}`
+    : `t = ${t.toFixed(2)} s · ${plural(state.volumes.length, "volume")} · ${plural(bs.bs_contacts(), "reacting contact")}`;
+
+  const thermal = bs.bs_bender_thermal_work(), kinetic = bs.bs_bender_kinetic_work();
+  document.getElementById("w-thermal").textContent = fmtEnergy(thermal);
+  document.getElementById("w-kinetic").textContent = fmtEnergy(kinetic);
+  document.getElementById("chi").textContent = `${(thermal / 100000 + kinetic / 5000).toFixed(1)} chi`;
+
+  let tx = 0, where = "At arena centre";
+  if (state.pointer) { tx = wx(state.pointer.x); where = `Under cursor (${(tx / 100).toFixed(1)} m)`; }
+  else if (state.patches.length) { tx = state.patches[0].x; where = `At the wettest patch (${(tx / 100).toFixed(1)} m)`; let best = -1; for (const p of state.patches) if (p.sat > best) { best = p.sat; tx = p.x; } }
+  const traction = bs.bs_traction_at(tx, 0);
+  document.getElementById("traction-where").textContent = where;
+  document.getElementById("traction-val").textContent = traction.toFixed(2);
+  document.getElementById("traction-bar").style.width = `${(traction * 100).toFixed(0)}%`;
+
+  const body = document.getElementById("vol-body");
+  const rows = [...state.volumes].sort((a, b) => (b.actor >= 0) - (a.actor >= 0) || b.mass - a.mass).slice(0, 12);
+  body.innerHTML = rows.length ? rows.map(v => {
+    let extra = "";
+    if (v.sub === 1) extra = `sat ${v.sat.toFixed(2)}`;
+    else if (v.sub === 3) extra = `${(Math.max(0, v.latent) * 100).toFixed(0)}% to melt`;
+    else if (v.sub === 2 && v.latent < 0) extra = `${(-v.latent * 100).toFixed(0)}% to freeze`;
+    else if (v.sub === 6) extra = `${(v.mass / ((4 / 3) * Math.PI * (v.r / 100) ** 3 + (v.capsule ? Math.PI * (v.r / 100) ** 2 * 2 * Math.hypot(v.hx, v.hz) / 100 : 0)) / 1.225).toFixed(1)}× ρ₀`;
+    else if (v.sub === 5) extra = v.T >= 2299 ? "at max" : "";
+    return `<tr><td><span class="sub"><i style="background:${SUB_COLOR[v.sub] || "#999"}"></i>${escapeHtml(v.label)}</span></td><td class="num">${fmtMass(v.mass)}</td><td class="num">${v.T.toFixed(0)} K</td><td class="num">${(Math.hypot(v.vx, v.vz) / 100).toFixed(1)} m/s</td><td class="num">${v.r.toFixed(0)} cm</td><td class="num">${extra}</td></tr>`;
+  }).join("") : `<tr><td colspan="6" class="empty">No volumes. Pick a tool and drag in the arena.</td></tr>`;
+
+  const totals = document.getElementById("totals");
+  const keys = Object.keys(state.totals);
+  totals.innerHTML = keys.length ? keys.map(k => {
+    const tot = state.totals[k];
+    const massy = ["Evaporation", "Condensation", "Oxygenation", "Saturation", "Erosion", "Melting", "Freezing"].includes(k);
+    return `<span class="chip"><b>${k}</b>&nbsp;${massy ? fmtMass(tot.mass) : (k === "Deflection" ? fmtEnergy(tot.energy) : "×" + tot.count)}</span>`;
+  }).join("") : `<span class="empty">No reactions yet.</span>`;
+
+  document.getElementById("log").innerHTML = state.log.slice(0, 40).map(ev => {
+    const name = REACTIONS[ev.type];
+    let detail;
+    if (ev.discrete) detail = `${SUBSTANCES[ev.a]} · ${fmtMass(ev.mass)}${ev.energy ? " · " + fmtEnergy(ev.energy) : ""}`;
+    else if (name === "Deflection") detail = `${SUBSTANCES[ev.a]} → ${SUBSTANCES[ev.b]} · ${fmtEnergy(ev.energy)} of work`;
+    else detail = `${SUBSTANCES[ev.a]} + ${SUBSTANCES[ev.b]} · ${fmtMass(ev.mass)} (${fmtMass(ev.rate)}/s)${ev.power ? " · " + fmtPower(ev.power) : ""}`;
+    return `<li class="${ev.discrete ? "discrete" : ""}"><span class="t">${ev.t.toFixed(2)}s</span><span><b>${name}</b> · ${detail}</span></li>`;
+  }).join("") || `<li><span></span><span class="empty">Reaction events appear here, aggregated every 0.1 s with rates.</span></li>`;
+
+  drawChart();
+}
+
+function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
+function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// ------------------------------------------------------------------ chart
+
+const chart = document.getElementById("chart");
+const cctx = chart.getContext("2d");
+const SERIES_TOKENS = ["--series-1", "--series-2", "--series-3"];
+
+function buildLegend() {
+  const def = CHARTS[state.scenario];
+  document.getElementById("h-chart").textContent = def.title;
+  document.getElementById("legend").innerHTML = def.series.map((s, i) => `<span><i style="background:var(${SERIES_TOKENS[i]})"></i>${s.label}</span>`).join("");
+}
+
+function niceTicks(lo, hi, n) {
+  const span = hi - lo || 1;
+  const step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || 10 * mag;
+  const start = Math.floor(lo / step) * step, ticks = [];
+  for (let v = start; v <= hi + step * 0.5; v += step) ticks.push(+v.toFixed(10));
+  return ticks;
+}
+
+function drawChart() {
+  const rect = chart.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(200, rect.width), h = Math.max(150, rect.height);
+  if (chart.width !== Math.round(w * dpr)) { chart.width = Math.round(w * dpr); chart.height = Math.round(h * dpr); }
+  cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cctx.clearRect(0, 0, w, h);
+  const hist = state.history;
+  const def = CHARTS[state.scenario];
+  let lo = Infinity, hi = -Infinity;
+  for (const p of hist) for (const v of p.values) if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const tMax = Math.max(state.duration < 1e8 ? state.duration : 0, hist.length ? hist[hist.length - 1].t : 1, 0.5);
+  if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+  if (hi - lo < 1e-6) { hi += 0.5; lo -= 0.5; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const ticks = niceTicks(lo, hi, 4);
+  lo = Math.min(lo, ticks[0]); hi = Math.max(hi, ticks[ticks.length - 1]);
+  const L = 48, R = 10, T = 8, B = 24;
+  const X = t => L + (t / tMax) * (w - L - R);
+  const Y = v => T + (1 - (v - lo) / (hi - lo)) * (h - T - B);
+  cctx.font = `11px ${css("--font-mono")}`;
+  cctx.fillStyle = css("--muted"); cctx.strokeStyle = css("--grid"); cctx.lineWidth = 1;
+  for (const tk of ticks) {
+    if (tk < lo || tk > hi) continue;
+    const y = Y(tk);
+    cctx.beginPath(); cctx.moveTo(L, y); cctx.lineTo(w - R, y); cctx.stroke();
+    cctx.fillText(Math.abs(tk) >= 1000 ? tk.toFixed(0) : (+tk.toPrecision(3)).toString(), 4, y + 4);
+  }
+  for (const tk of niceTicks(0, tMax, 6)) {
+    if (tk > tMax) continue;
+    cctx.fillText(`${tk}s`, X(tk) - 8, h - 6);
+  }
+  def.series.forEach((s, i) => {
+    const color = css(SERIES_TOKENS[i]);
+    cctx.strokeStyle = color; cctx.lineWidth = 2; cctx.beginPath();
+    let pen = false, last = null;
+    for (const p of hist) {
+      const v = p.values[i];
+      if (v === null) { pen = false; continue; }
+      const x = X(p.t), y = Y(v);
+      if (pen) cctx.lineTo(x, y); else cctx.moveTo(x, y);
+      pen = true; last = { x, y };
+    }
+    cctx.stroke();
+    if (last) { cctx.fillStyle = color; cctx.beginPath(); cctx.arc(last.x, last.y, 3.5, 0, Math.PI * 2); cctx.fill(); }
+  });
+}
+
+// ------------------------------------------------------------------ chrome
+
+function buildScenarioList() {
+  const list = document.getElementById("scenarios");
+  const n = bs.bs_scenario_count();
+  list.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "scenario"; b.dataset.id = String(i); b.setAttribute("role", "listitem");
+    b.innerHTML = `<span class="n">${i < n - 1 ? String(i + 1).padStart(2, "0") : "··"}</span><span class="name">${escapeHtml(cstr(bs.bs_scenario_name(i)))}</span>`;
+    b.addEventListener("click", () => { loadScenario(i); setPlaying(true); });
+    list.appendChild(b);
+  }
+}
+
+function buildParams() {
+  const host = document.getElementById("params");
+  host.innerHTML = PARAMS.map(p => `<div class="param"><label for="param-${p.id}">${p.name}</label><output id="out-${p.id}">${p.fmt(state.params[p.id])}</output><input id="param-${p.id}" type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${state.params[p.id]}"><small>${p.note}</small></div>`).join("");
+  for (const p of PARAMS) {
+    const input = document.getElementById(`param-${p.id}`);
+    input.addEventListener("input", () => {
+      state.params[p.id] = Number(input.value);
+      document.getElementById(`out-${p.id}`).textContent = p.fmt(state.params[p.id]);
+      if (bs) bs.bs_set_param(p.id, state.params[p.id]);
+    });
+  }
+}
+
+function setPlaying(on) {
+  state.playing = on;
+  if (on) { document.getElementById("end-overlay").hidden = true; if (state.ended) state.keepRunning = true; }
+  document.getElementById("play").textContent = on ? "Pause" : "Play";
+}
+
+document.getElementById("play").addEventListener("click", () => setPlaying(!state.playing));
+document.getElementById("step").addEventListener("click", () => { setPlaying(false); stepFrame(); updateDom(true); });
+document.getElementById("restart").addEventListener("click", () => { loadScenario(state.scenario); setPlaying(true); });
+document.getElementById("replay").addEventListener("click", () => { loadScenario(state.scenario); setPlaying(true); });
+document.getElementById("continue").addEventListener("click", () => { state.keepRunning = true; setPlaying(true); });
+document.getElementById("reset-params").addEventListener("click", () => {
+  for (const p of PARAMS) state.params[p.id] = p.def;
+  buildParams(); if (bs) applyParams();
+});
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  state.speed = Number(b.dataset.speed);
+  document.querySelectorAll(".seg button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+}));
+document.querySelectorAll(".tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
+window.addEventListener("resize", () => { resizeArena(); drawChart(); });
+
+// ------------------------------------------------------------------ loop
+
+let lastNow = performance.now();
+function tick(now) {
+  const dt = Math.min((now - lastNow) / 1000, 0.1);
+  lastNow = now;
+  if (bs) {
+    if (state.playing) {
+      state.acc += dt * state.speed;
+      let steps = 0;
+      while (state.acc >= FRAME && steps < 6 && state.playing) { stepFrame(); state.acc -= FRAME; steps++; }
+      if (steps >= 6) state.acc = 0;
+    }
+    updateHover();
+    drawArena(now);
+    updateDom(false);
+  }
+  requestAnimationFrame(tick);
+}
+
+async function boot() {
+  buildParams();
+  resizeArena();
+  setPlaying(state.playing);
+  try {
+    const bytes = Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0));
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    bs = instance.exports;
+    bs.__wasm_call_ctors?.();
+    document.getElementById("kernel-status").textContent = `Kernel running · ${(bytes.length / 1024).toFixed(0)} KB WebAssembly`;
+    document.getElementById("kernel-chip").classList.remove("wait");
+    buildScenarioList();
+    loadScenario(0);
+    setTool("inspect");
+  } catch (err) {
+    document.getElementById("kernel-status").textContent = "Kernel failed to load";
+    showHint(`The WebAssembly kernel could not start in this browser: ${escapeHtml(String(err && err.message || err))}`);
+  }
+  requestAnimationFrame(tick);
+}
+boot();
+</script>

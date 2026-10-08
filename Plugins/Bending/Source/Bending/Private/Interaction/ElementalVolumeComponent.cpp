@@ -3,6 +3,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "Interaction/BendingInteractionSubsystem.h"
+#include "Physics/BendingUnits.h"
 
 UElementalVolumeComponent::UElementalVolumeComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -123,7 +124,7 @@ bool UElementalVolumeComponent::GetSimulatedState(FElementalVolumeState& OutStat
 	return Subsystem && Subsystem->GetVolumeState(Handle, OutState);
 }
 
-FElementalVolumeState* UElementalVolumeComponent::GetMutableSimulatedState()
+BendingSim::FVolume* UElementalVolumeComponent::GetMutableSimulatedState()
 {
 	UBendingInteractionSubsystem* Subsystem = GetInteractionSubsystem();
 	return Subsystem ? Subsystem->GetVolume(Handle) : nullptr;
@@ -134,43 +135,46 @@ void UElementalVolumeComponent::SetManualVelocity(FVector VelocityCmS)
 	ManualVelocityCmS = VelocityCmS;
 }
 
-FElementalPhaseChange UElementalVolumeComponent::AddHeat(double HeatJ)
+FElementalPhaseChange UElementalVolumeComponent::AddHeat(double HeatJ, double& OutAcceptedHeatJ)
 {
+	OutAcceptedHeatJ = 0.0;
 	UBendingInteractionSubsystem* Subsystem = GetInteractionSubsystem();
-	return Subsystem ? Subsystem->TransferHeat(Handle, HeatJ) : FElementalPhaseChange();
+	return Subsystem ? Subsystem->TransferHeat(Handle, HeatJ, OutAcceptedHeatJ) : FElementalPhaseChange();
 }
 
-void UElementalVolumeComponent::PreSimulationSync(FElementalVolumeState& State, double FrameSeconds)
+void UElementalVolumeComponent::PreSimulationSync(BendingSim::FVolume& Volume, double FrameSeconds)
 {
 	const FVector Location = GetComponentLocation();
-	State.LocationCm = Location;
-	if (State.Shape == EElementalVolumeShape::Capsule)
+	Volume.LocationCm = BendingUnits::ToSim(Location);
+	if (Volume.Shape == BendingSim::EShape::Capsule)
 	{
-		State.CapsuleHalfAxisCm = GetWorldCapsuleHalfAxis();
+		Volume.CapsuleHalfAxisCm = BendingUnits::ToSim(GetWorldCapsuleHalfAxis());
 	}
 
+	FVector Velocity = FVector::ZeroVector;
 	switch (VelocitySource)
 	{
 	case EElementalVelocitySource::AttachedPhysicsBody:
 		if (UPrimitiveComponent* Body = GetSimulatingParent())
 		{
-			State.VelocityCmS = Body->GetPhysicsLinearVelocityAtPoint(Location);
+			Velocity = Body->GetPhysicsLinearVelocityAtPoint(Location);
 			break;
 		}
 		[[fallthrough]];
 	case EElementalVelocitySource::FiniteDifference:
-		State.VelocityCmS = bHasLastLocation && FrameSeconds > UE_SMALL_NUMBER ? (Location - LastLocation) / FrameSeconds : FVector::ZeroVector;
+		Velocity = bHasLastLocation && FrameSeconds > UE_SMALL_NUMBER ? (Location - LastLocation) / FrameSeconds : FVector::ZeroVector;
 		break;
 	case EElementalVelocitySource::Manual:
-		State.VelocityCmS = ManualVelocityCmS;
+		Velocity = ManualVelocityCmS;
 		break;
 	}
+	Volume.VelocityCmS = BendingUnits::ToSim(Velocity);
 
 	LastLocation = Location;
 	bHasLastLocation = true;
 }
 
-void UElementalVolumeComponent::PostSimulationSync(const FElementalVolumeState& State, const FVector& FrameImpulseKgCmS,
+void UElementalVolumeComponent::PostSimulationSync(const BendingSim::FVolume& Volume, const FVector& FrameImpulseKgCmS,
 	EElementalSubstance PreviousSubstance, bool bNewlyDepleted)
 {
 	UPrimitiveComponent* Body = GetSimulatingParent();
@@ -179,23 +183,24 @@ void UElementalVolumeComponent::PostSimulationSync(const FElementalVolumeState& 
 	{
 		if (bApplyImpulsesToAttachedBody && Body)
 		{
-			Body->AddImpulseAtLocation(FrameImpulseKgCmS, State.LocationCm);
+			Body->AddImpulseAtLocation(FrameImpulseKgCmS, BendingUnits::ToEngine(Volume.LocationCm));
 		}
 		OnImpulseReceived.Broadcast(FrameImpulseKgCmS);
 	}
 
-	if (bSyncMassWithAttachedBody && Body && State.MassKg > 0.0)
+	if (bSyncMassWithAttachedBody && Body && Volume.MassKg > 0.0)
 	{
 		const double BodyMassKg = Body->GetMass();
-		if (FMath::Abs(BodyMassKg - State.MassKg) > 0.005 * State.MassKg)
+		if (FMath::Abs(BodyMassKg - Volume.MassKg) > 0.005 * Volume.MassKg)
 		{
-			Body->SetMassOverrideInKg(NAME_None, static_cast<float>(State.MassKg), true);
+			Body->SetMassOverrideInKg(NAME_None, static_cast<float>(Volume.MassKg), true);
 		}
 	}
 
-	if (PreviousSubstance != State.Substance)
+	const EElementalSubstance CurrentSubstance = ElementalSubstance::FromSim(Volume.Substance);
+	if (PreviousSubstance != CurrentSubstance)
 	{
-		OnSubstanceChanged.Broadcast(PreviousSubstance, State.Substance);
+		OnSubstanceChanged.Broadcast(PreviousSubstance, CurrentSubstance);
 	}
 	if (bNewlyDepleted)
 	{

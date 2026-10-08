@@ -74,15 +74,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Elemental")
 	bool GetSimulatedState(FElementalVolumeState& OutState) const;
 
-	/** Direct access for owners that drive matter themselves (a firebender feeding heat into a stream). */
-	FElementalVolumeState* GetMutableSimulatedState();
+	/** Direct access to the simulated body for owners that drive matter themselves (a firebender feeding a stream). */
+	BendingSim::FVolume* GetMutableSimulatedState();
 
 	UFUNCTION(BlueprintCallable, Category = "Elemental")
 	void SetManualVelocity(FVector VelocityCmS);
 
-	/** Adds heat (J); negative extracts it. Freezing a water whip is AddHeat(-HeatToFreeze). */
+	/**
+	 * Adds heat (J); negative extracts it. Freezing a water whip is AddHeat(-BendingSim::HeatToFreeze(volume)).
+	 * OutAcceptedHeatJ is what was actually absorbed (flame is capped at the adiabatic temperature): bill chi on that.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Elemental")
-	FElementalPhaseChange AddHeat(double HeatJ);
+	FElementalPhaseChange AddHeat(double HeatJ, double& OutAcceptedHeatJ);
 
 	UPROPERTY(BlueprintAssignable, Category = "Elemental")
 	FElementalSubstanceChangedSignature OnSubstanceChanged;
@@ -96,8 +99,8 @@ public:
 	FElementalDepletedSignature OnDepleted;
 
 	//~ Called by UBendingInteractionSubsystem
-	void PreSimulationSync(FElementalVolumeState& State, double FrameSeconds);
-	void PostSimulationSync(const FElementalVolumeState& State, const FVector& FrameImpulseKgCmS, EElementalSubstance PreviousSubstance, bool bNewlyDepleted);
+	void PreSimulationSync(BendingSim::FVolume& Volume, double FrameSeconds);
+	void PostSimulationSync(const BendingSim::FVolume& Volume, const FVector& FrameImpulseKgCmS, EElementalSubstance PreviousSubstance, bool bNewlyDepleted);
 
 	//~ UActorComponent
 	virtual void Activate(bool bReset = false) override;

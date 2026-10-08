@@ -5,16 +5,13 @@
 #include "ElementalReaction_AeroDrag.generated.h"
 
 /**
- * Air + X -> Deflection / Erosion. SubstanceA must be Air.
+ * Air + X -> Deflection / Erosion (BendingSim::ReactAeroDrag). SubstanceA must be Air.
  *
- * Two forces act on the body inside an air volume:
- *  - Quadratic drag from the relative wind: F = 1/2 * rho * Cd * A * |v| * v.
- *  - Overpressure of compressed air (a bender's pressure wave, rho > ambient) while its front sweeps across
- *    the body. Uniform pressure on all sides cancels, so this peaks when the body is half immersed.
- *
- * Whether an incoming boulder is deflected falls out of the impulse it receives against its momentum:
- * dv = J / m. A gust scatters pebbles and barely nudges a slab. Loose, dry earth also erodes when the
- * dynamic pressure exceeds a threshold. Newton's third law: the air loses the same momentum.
+ * Quadratic drag 1/2 * rho * Cd * A * |v| * v from the relative wind over the immersed part of the body. A bender's
+ * compressed air carries more momentum per volume. dv = J / m decides deflection: the same jet turns a pebble around
+ * and barely slows a boulder (dv scales with area / mass). The impulse is capped at a full inelastic merge, so drag
+ * never pushes a body past the wind and never creates energy. Loose, dry earth erodes above a critical dynamic
+ * pressure. The air loses exactly the momentum the body gains.
  */
 UCLASS(meta = (DisplayName = "Aerodynamic Drag (Deflection, Erosion)"))
 class BENDING_API UElementalReaction_AeroDrag : public UElementalReaction
@@ -24,25 +21,21 @@ class BENDING_API UElementalReaction_AeroDrag : public UElementalReaction
 public:
 	UElementalReaction_AeroDrag();
 
-	virtual void React(FElementalReactionContext& Context) const override;
-
-	/** Share of overpressure * area delivered as force by a passing front. */
-	UPROPERTY(EditAnywhere, Category = "Force", meta = (ClampMin = 0.0))
-	float PressureCoupling = 1.f;
+	virtual void React(BendingSim::FReactionContext& Context) const override;
 
 	/** Earth with at least this porosity is loose enough to erode (sand, soil; not rock). */
 	UPROPERTY(EditAnywhere, Category = "Erosion", meta = (ClampMin = 0.0, ClampMax = 1.0))
-	float ErodiblePorosity = 0.2f;
+	float ErodiblePorosity;
 
 	/** Wet soil holds together: no erosion above this saturation. */
 	UPROPERTY(EditAnywhere, Category = "Erosion", meta = (ClampMin = 0.0, ClampMax = 1.0))
-	float MaxErodibleSaturation = 0.3f;
+	float MaxErodibleSaturation;
 
 	/** Dynamic pressure (Pa) at which loose grains start moving. ~150 Pa is a ~15 m/s wind. */
 	UPROPERTY(EditAnywhere, Category = "Erosion", meta = (ClampMin = 0.0))
-	float CriticalErosionPressurePa = 150.f;
+	float CriticalErosionPressurePa;
 
 	/** Eroded mass per second per m^2 per Pa of excess dynamic pressure. */
 	UPROPERTY(EditAnywhere, Category = "Erosion", meta = (ClampMin = 0.0))
-	float ErosionCoefficient = 2e-4f;
+	float ErosionCoefficient;
 };

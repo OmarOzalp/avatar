@@ -85,9 +85,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Surfaces", meta = (ClampMin = 1))
 	int32 MaxMoisturePatches = 64;
 
-	/** Soil depth (m) that holds deposited water. Capacity = rho_water * porosity * depth * area. */
+	/** Surface soil depth (m) whose water decides traction. Capacity = rho_water * porosity * depth * area. */
 	UPROPERTY(Config, EditAnywhere, Category = "Surfaces", meta = (ClampMin = 0.01))
-	float MoistureSoilDepthM = 0.15f;
+	float MoistureSoilDepthM = 0.05f;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Surfaces", meta = (ClampMin = 1.0, Units = "cm"))
 	float MinMoisturePatchRadiusCm = 60.f;
