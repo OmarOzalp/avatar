@@ -121,7 +121,10 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Resources", meta = (ClampMin = 1.0))
 	float KineticJoulesPerChi = 5000.f;
 
-	/** Heat (J) one point of chi buys. Phase changes cost megajoules, so this rate is much higher. */
+	/**
+	 * Heat (J) one point of chi buys. Phase changes cost megajoules, so this rate is much higher.
+	 * Matches BendingSim::FTechniqueTuning::ThermalJoulesPerChi, so the browser sandbox and Unreal bill alike.
+	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Resources", meta = (ClampMin = 1.0))
-	float ThermalJoulesPerChi = 100000.f;
+	float ThermalJoulesPerChi = 250000.f;
 };

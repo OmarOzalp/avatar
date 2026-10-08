@@ -10,19 +10,43 @@
 class UAbilitySystemComponent;
 class UBendingAttributeSet;
 class UBendingComponent;
+class UBendingDiscipline;
 class UBendingInputConfig;
+class UBendingTechniqueComponent;
 class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
 class UMotionWarpingComponent;
+class USceneComponent;
 class USpringArmComponent;
+class UStaticMeshComponent;
 struct FInputActionValue;
+
+/** Joint angles (degrees) and vertical bob (cm) of the blocky body. */
+struct FAvatarBodyPose
+{
+	float LegL = 0.f;
+	float LegR = 0.f;
+	float ArmL = 0.f;
+	float ArmR = 0.f;
+	/** Arms lifted out sideways (left positive, right negative). */
+	float ArmRollL = 0.f;
+	float ArmRollR = 0.f;
+	/** Negative leans forward. */
+	float SpinePitch = 0.f;
+	float SpineYaw = 0.f;
+	float BobCm = 0.f;
+};
 
 /**
  * Playable bender. Owns its ability system (single player: the pawn is the owner and avatar), the
  * bending component, Motion Warping for strike alignment, and a third-person camera.
  *
  * Root motion drives the body during moves; ground traction drops on mud from waterbending.
+ *
+ * Works without any assets: a low-poly body of engine basic shapes, animated procedurally (walk and run cycle,
+ * jump pose, and a casting pose driven by the current move's Startup / Active / Recovery frames), the sandbox
+ * techniques granted as disciplines, and Enhanced Input objects built at runtime when none are assigned.
  */
 UCLASS(Config = Game)
 class AVATAR_API AAvatarCharacter : public ACharacter, public IAbilitySystemInterface
@@ -35,6 +59,7 @@ public:
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 	UBendingComponent* GetBendingComponent() const { return Bending; }
+	UBendingTechniqueComponent* GetTechniqueComponent() const { return Techniques; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -48,9 +73,31 @@ protected:
 	void Input_BendingPressed(FGameplayTag InputTag);
 	void Input_BendingReleased(FGameplayTag InputTag);
 	void Input_SelectStance(EBendingElement Element);
+	void Input_SprintStarted();
+	void Input_SprintCompleted();
+	void Input_ToggleHelp();
 
 	/** Scales ground friction, braking and acceleration by the mud under the feet. */
 	void UpdateGroundTraction();
+
+	/** Builds input actions, the bending input config and a mapping context when no mapping context is assigned. */
+	void EnsureRuntimeInput();
+
+	/** Grants one discipline per element built from the kernel's technique table, unless disciplines were assigned. */
+	void GrantSandboxDisciplines();
+
+	/** Faces the aim while bending (strafing), the direction of travel otherwise; slows down while casting. */
+	void UpdateMovementMode();
+
+	void UpdateBodyAnimation(float DeltaSeconds);
+
+	/** Arm and spine pose of the current move; returns how strongly it overrides locomotion (0..1). */
+	float ComputeCastPose(FAvatarBodyPose& InOutPose) const;
+
+	/** Shirt and sash take the colour of the active stance. */
+	void UpdateElementTint();
+
+	float GetAimPitchDegrees() const;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bending")
 	TObjectPtr<UAbilitySystemComponent> AbilitySystem;
@@ -61,6 +108,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bending")
 	TObjectPtr<UBendingComponent> Bending;
 
+	/** Executes the sandbox techniques (water whip, rock throw, terraforming, fire, air) for the granted moves. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bending")
+	TObjectPtr<UBendingTechniqueComponent> Techniques;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bending")
 	TObjectPtr<UMotionWarpingComponent> MotionWarping;
 
@@ -69,6 +120,42 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	TObjectPtr<UCameraComponent> FollowCamera;
+
+	// ---------------------------------------------------------------- Body (engine basic shapes, no collision)
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<USceneComponent> BodyRoot;
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<USceneComponent> Spine;
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<USceneComponent> HipL;
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<USceneComponent> HipR;
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<USceneComponent> ShoulderL;
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<USceneComponent> ShoulderR;
+
+	/** End of the right arm: where water, fire and air leave the body. */
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<USceneComponent> HandR;
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<UStaticMeshComponent> Torso;
+
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TObjectPtr<UStaticMeshComponent> Sash;
+
+	/** Every other body part, coloured once at BeginPlay. */
+	UPROPERTY(VisibleAnywhere, Category = "Body")
+	TArray<TObjectPtr<UStaticMeshComponent>> BodyParts;
+
+	// ---------------------------------------------------------------- Input
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
@@ -82,11 +169,42 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> JumpAction;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> SprintAction;
+
+	/** Shows or hides the controls panel of AAvatarHUD. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> ToggleHelpAction;
+
 	/** Move inputs (Light/Heavy/Special/Utility) and stance selection. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UBendingInputConfig> BendingInputConfig;
 
+	// ---------------------------------------------------------------- Movement
+
+	UPROPERTY(EditDefaultsOnly, Category = "Movement", meta = (ClampMin = 0.0))
+	float WalkSpeed = 500.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Movement", meta = (ClampMin = 0.0))
+	float SprintSpeed = 800.f;
+
+	/** Speed multiplier during a move's startup and active frames and while holding a technique. */
+	UPROPERTY(EditDefaultsOnly, Category = "Movement", meta = (ClampMin = 0.0, ClampMax = 1.0))
+	float CastingSpeedScale = 0.6f;
+
 private:
+	/** Granted sandbox disciplines (runtime objects): referenced here for as long as they are granted. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UBendingDiscipline>> SandboxDisciplines;
+
+	TArray<FLinearColor> BodyPartColors;
+	FAvatarBodyPose CurrentPose;
+	float WalkPhase = 0.f;
+	float CastWeight = 0.f;
+	EBendingElement TintedElement = EBendingElement::None;
+	bool bBodyTinted = false;
+	bool bSprinting = false;
+
 	float BaseGroundFriction = 8.f;
 	float BaseBrakingDecelerationWalking = 2048.f;
 	float BaseMaxAcceleration = 2048.f;

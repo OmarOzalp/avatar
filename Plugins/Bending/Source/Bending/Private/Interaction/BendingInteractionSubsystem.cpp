@@ -119,11 +119,19 @@ void UBendingInteractionSubsystem::RegisterBuiltInReactions()
 		AddReaction(Reaction);
 	};
 
+	// Flame on a solid has no boiling layer, so it passes far less heat than flame on liquid water.
+	auto MakeFlameOnSolid = [this]()
+	{
+		UElementalReaction_HeatExchange* Reaction = NewObject<UElementalReaction_HeatExchange>(this);
+		Reaction->HeatTransferCoefficient = static_cast<float>(BendingSim::MakeFlameOnSolidParams().HeatTransferCoefficient);
+		return Reaction;
+	};
+
 	// Same rule set as BendingSim::AddBuiltInReactions, but as editable objects.
 	Add(NewObject<UElementalReaction_HeatExchange>(this), EElementalSubstance::Fire, EElementalSubstance::Water);
-	Add(NewObject<UElementalReaction_HeatExchange>(this), EElementalSubstance::Fire, EElementalSubstance::Ice);
+	Add(MakeFlameOnSolid(), EElementalSubstance::Fire, EElementalSubstance::Ice);
 	Add(NewObject<UElementalReaction_HeatExchange>(this), EElementalSubstance::Steam, EElementalSubstance::Ice);
-	Add(NewObject<UElementalReaction_HeatExchange>(this), EElementalSubstance::Fire, EElementalSubstance::Earth);
+	Add(MakeFlameOnSolid(), EElementalSubstance::Fire, EElementalSubstance::Earth);
 	Add(NewObject<UElementalReaction_Oxygenation>(this), EElementalSubstance::Air, EElementalSubstance::Fire);
 	Add(NewObject<UElementalReaction_Saturation>(this), EElementalSubstance::Water, EElementalSubstance::Earth);
 	Add(NewObject<UElementalReaction_AeroDrag>(this), EElementalSubstance::Air, EElementalSubstance::Earth);
@@ -371,10 +379,16 @@ void UBendingInteractionSubsystem::SyncToOwners()
 		{
 			continue;
 		}
+		if (OwnerBySlot[Index].IsStale())
+		{
+			// Its component was destroyed without unregistering.
+			OwnerBySlot[Index] = nullptr;
+			SimWorld->RemoveVolume(Handle);
+			continue;
+		}
 		if (!OwnerBySlot[Index].IsValid())
 		{
-			// Owner destroyed without unregistering.
-			SimWorld->RemoveVolume(Handle);
+			// Owned natively (FWaterWhip segments): that owner consumes its own updates.
 			continue;
 		}
 		FPendingOwnerUpdate& Entry = Pending.AddDefaulted_GetRef();

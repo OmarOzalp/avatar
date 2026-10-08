@@ -44,7 +44,8 @@ struct BENDING_API FSurfaceMoisturePatch
  * engine-independent kernel under Sim/, which is compiled and tested outside Unreal (Tests/run_all.sh) and also
  * runs in the WebAssembly sandbox. This class only:
  *   - feeds the kernel settings from Project Settings and the world's gravity,
- *   - syncs UElementalVolumeComponent owners in before the step and out after (impulses, phase changes, depletion),
+ *   - syncs UElementalVolumeComponent owners in before the step and out after (impulses, phase changes, depletion);
+ *     native owners that add owned volumes to GetSimWorld() directly (FWaterWhip) sync and consume their own,
  *   - registers designer reaction rules, and
  *   - converts kernel events into Blueprint-visible delegates.
  */
@@ -149,7 +150,11 @@ private:
 
 	TUniquePtr<BendingSim::FSimWorld> SimWorld;
 
-	/** Owner per kernel slot index. */
+	/**
+	 * Owner per kernel slot index. Explicitly null for free volumes and for volumes owned natively (FWaterWhip
+	 * segments); stale only when the component died without unregistering. Every removal resets the entry to null,
+	 * so a reused slot never looks stale.
+	 */
 	TArray<TWeakObjectPtr<UElementalVolumeComponent>> OwnerBySlot;
 
 	UPROPERTY(Transient)
