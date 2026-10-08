@@ -132,12 +132,10 @@ void UBendingComponent::InitializeWithAbilitySystem(UAbilitySystemComponent* InA
 		GrantDiscipline(Discipline);
 	}
 
-	if (ActiveElement == EBendingElement::None)
+	// GrantDiscipline already fell back to the first granted element; an explicit default overrides it.
+	if (DefaultElement != EBendingElement::None && HasDiscipline(DefaultElement))
 	{
-		const EBendingElement Initial = DefaultElement != EBendingElement::None
-			? DefaultElement
-			: (GrantedDisciplines.Num() > 0 ? GrantedDisciplines[0]->Element : EBendingElement::None);
-		SetActiveElement(Initial);
+		SetActiveElement(DefaultElement);
 	}
 }
 
@@ -256,25 +254,14 @@ bool UBendingComponent::SetActiveElement(EBendingElement Element)
 
 void UBendingComponent::HandleInputPressed(FGameplayTag InputTag)
 {
-	UAbilitySystemComponent* ASC = AbilitySystem.Get();
-	if (!InputTag.IsValid() || !ASC)
+	if (!InputTag.IsValid() || !AbilitySystem.IsValid())
 	{
 		return;
 	}
 	HeldInputs.Add(InputTag);
 
 	// Running moves bound to this input see the press (follow-ups, re-press handling inside the move).
-	for (const FBendingGrantedMove& Granted : GrantedMoves)
-	{
-		if (Granted.Move && Granted.Move->InputTag.MatchesTagExact(InputTag))
-		{
-			FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(Granted.Handle);
-			if (Spec && Spec->IsActive())
-			{
-				ASC->AbilitySpecInputPressed(*Spec);
-			}
-		}
-	}
+	ForwardInputToActiveMoves(InputTag, true);
 
 	if (CanStartNewMove() && TryStartMove(InputTag))
 	{
@@ -293,21 +280,54 @@ void UBendingComponent::HandleInputPressed(FGameplayTag InputTag)
 
 void UBendingComponent::HandleInputReleased(FGameplayTag InputTag)
 {
-	UAbilitySystemComponent* ASC = AbilitySystem.Get();
-	if (!InputTag.IsValid() || !ASC)
+	if (!InputTag.IsValid() || !AbilitySystem.IsValid())
 	{
 		return;
 	}
 	HeldInputs.Remove(InputTag);
+	ForwardInputToActiveMoves(InputTag, false);
+}
 
+void UBendingComponent::ForwardInputToActiveMoves(const FGameplayTag& InputTag, bool bPressed)
+{
+	UAbilitySystemComponent* ASC = AbilitySystem.Get();
+	if (!ASC)
+	{
+		return;
+	}
+	const FGameplayAbilityActorInfo* ActorInfo = ASC->AbilityActorInfo.Get();
+
+	// Same effect as UAbilitySystemComponent::AbilitySpecInputPressed/Released, through public API only.
+	// Bending moves do not use WaitInputPress tasks, so the replicated input events are not needed.
 	for (const FBendingGrantedMove& Granted : GrantedMoves)
 	{
-		if (Granted.Move && Granted.Move->InputTag.MatchesTagExact(InputTag))
+		if (!Granted.Move || !Granted.Move->InputTag.MatchesTagExact(InputTag))
 		{
-			FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(Granted.Handle);
-			if (Spec && Spec->IsActive())
+			continue;
+		}
+		FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(Granted.Handle);
+		if (!Spec)
+		{
+			continue;
+		}
+		Spec->InputPressed = bPressed;
+		if (!Spec->IsActive())
+		{
+			continue;
+		}
+		for (UGameplayAbility* Instance : Spec->GetAbilityInstances())
+		{
+			if (!Instance)
 			{
-				ASC->AbilitySpecInputReleased(*Spec);
+				continue;
+			}
+			if (bPressed)
+			{
+				Instance->InputPressed(Spec->Handle, ActorInfo, Instance->GetCurrentActivationInfo());
+			}
+			else
+			{
+				Instance->InputReleased(Spec->Handle, ActorInfo, Instance->GetCurrentActivationInfo());
 			}
 		}
 	}
@@ -437,6 +457,13 @@ void UBendingComponent::OnMoveStarted(UBendingGameplayAbility* Ability, const UB
 		return;
 	}
 
+	// A move can start while another is still registered (an uncancellable ability, an event-triggered
+	// ability, a Blueprint activating directly). Drop the old move's tags first so none leak.
+	if (CurrentAbility.IsValid() && CurrentAbility.Get() != Ability)
+	{
+		ClearMoveState();
+	}
+
 	CurrentAbility = Ability;
 	CurrentMove = Move;
 	CurrentMontage = Montage;
@@ -467,6 +494,16 @@ void UBendingComponent::OnMoveEnded(UBendingGameplayAbility* Ability, bool bWasC
 	}
 
 	const UBendingMoveDefinition* EndedMove = CurrentMove;
+	ClearMoveState();
+	UE_LOG(LogBending, Verbose, TEXT("%s ended%s."), *GetNameSafe(EndedMove), bWasCancelled ? TEXT(" (cancelled)") : TEXT(""));
+
+	// A buffered successor fires on the next tick rather than from inside another ability's EndAbility.
+	RefreshTickEnabled();
+}
+
+void UBendingComponent::ClearMoveState()
+{
+	const UBendingMoveDefinition* EndedMove = CurrentMove;
 	if (UMotionWarpingComponent* Warp = MotionWarping.Get(); Warp && EndedMove)
 	{
 		Warp->RemoveWarpTarget(EndedMove->WarpTargetName);
@@ -492,11 +529,6 @@ void UBendingComponent::OnMoveEnded(UBendingGameplayAbility* Ability, bool bWasC
 	{
 		OnPhaseChanged.Broadcast(this, EBendingPhase::None, EndedMove);
 	}
-
-	UE_LOG(LogBending, Verbose, TEXT("%s ended%s."), *GetNameSafe(EndedMove), bWasCancelled ? TEXT(" (cancelled)") : TEXT(""));
-
-	// A buffered successor fires on the next tick, once the ending ability has fully released its spec.
-	RefreshTickEnabled();
 }
 
 void UBendingComponent::NotifyPhaseBegin(EBendingPhase Phase, float SegmentSeconds, USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation)
@@ -545,8 +577,15 @@ void UBendingComponent::EnterPhase(EBendingPhase NewPhase)
 	}
 	UpdateCancelWindowTag();
 
-	// Callbacks below may end the ability and clear CurrentMove; keep what we broadcast.
+	// Listeners hear the phase before the ability reacts to it, so an ability ending inside OnActiveBegin
+	// (or similar) broadcasts None strictly after NewPhase. Either side may end or replace the move.
 	const UBendingMoveDefinition* Move = CurrentMove;
+	OnPhaseChanged.Broadcast(this, NewPhase, Move);
+	if (CurrentMove != Move || CurrentPhase != NewPhase)
+	{
+		return;
+	}
+
 	if (UAbilitySystemComponent* ASC = AbilitySystem.Get())
 	{
 		FGameplayEventData Payload;
@@ -556,7 +595,6 @@ void UBendingComponent::EnterPhase(EBendingPhase NewPhase)
 		Payload.OptionalObject = Move;
 		ASC->HandleGameplayEvent(Payload.EventTag, &Payload);
 	}
-	OnPhaseChanged.Broadcast(this, NewPhase, Move);
 }
 
 void UBendingComponent::AdvanceTimedPhases()
@@ -575,7 +613,14 @@ void UBendingComponent::AdvanceTimedPhases()
 		{
 			return;
 		}
-		EnterPhase(NextBendingPhase(CurrentPhase, FrameData));
+		const UBendingMoveDefinition* Move = CurrentMove;
+		const EBendingPhase Next = NextBendingPhase(CurrentPhase, FrameData);
+		EnterPhase(Next);
+		if (CurrentMove != Move || CurrentPhase != Next)
+		{
+			// The phase callbacks ended or replaced the move; its clock is no longer ours to adjust.
+			return;
+		}
 		PhaseStartTime = PhaseStart + PhaseDuration;
 	}
 }
@@ -789,6 +834,11 @@ double UBendingComponent::SpendChiForEnergy(double RequestedEnergyJ, EBendingEne
 {
 	UAbilitySystemComponent* ASC = AbilitySystem.Get();
 	if (!ASC || RequestedEnergyJ <= 0.0)
+	{
+		return 0.0;
+	}
+	// Element physics is authoritative; a client could not apply the cost without a prediction key.
+	if (!GetOwner()->HasAuthority())
 	{
 		return 0.0;
 	}

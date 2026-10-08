@@ -75,6 +75,8 @@ public:
 	void UnregisterVolume(FElementalVolumeHandle Handle);
 
 	[[nodiscard]] bool IsValidVolume(FElementalVolumeHandle Handle) const;
+	/** Registered but spent (mass ran out, flame went out); waiting for its owner to unregister or re-register. */
+	[[nodiscard]] bool IsVolumeDepleted(FElementalVolumeHandle Handle) const;
 	[[nodiscard]] FElementalVolumeState* GetVolume(FElementalVolumeHandle Handle);
 	[[nodiscard]] const FElementalVolumeState* GetVolume(FElementalVolumeHandle Handle) const;
 	[[nodiscard]] UElementalVolumeComponent* GetVolumeOwner(FElementalVolumeHandle Handle) const;

@@ -210,6 +210,8 @@ private:
 		double TimeSeconds = 0.0;
 	};
 
+	void ForwardInputToActiveMoves(const FGameplayTag& InputTag, bool bPressed);
+	void ClearMoveState();
 	bool CanStartNewMove() const;
 	bool TryStartMove(const FGameplayTag& InputTag);
 	bool PassesPreActivationChecks(const FBendingGrantedMove& Granted) const;

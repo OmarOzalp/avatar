@@ -158,14 +158,14 @@ void UBendingGameplayAbility::ActivateAbility(const FGameplayAbilitySpecHandle H
 void UBendingGameplayAbility::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
-	if (IsEndAbilityValid(Handle, ActorInfo))
-	{
-		if (UBendingComponent* Bending = GetBendingComponent())
-		{
-			Bending->OnMoveEnded(this, bWasCancelled);
-		}
-	}
+	// Notify after Super so the spec is inactive and its tasks are gone: a listener reacting to the move
+	// ending can immediately start the next one, even the same move again.
+	UBendingComponent* Bending = IsEndAbilityValid(Handle, ActorInfo) ? GetBendingComponent() : nullptr;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+	if (Bending)
+	{
+		Bending->OnMoveEnded(this, bWasCancelled);
+	}
 }
 
 void UBendingGameplayAbility::InputReleased(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,

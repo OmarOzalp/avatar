@@ -61,7 +61,11 @@ struct BENDING_API FElementalVolumeHandle
 	}
 
 private:
+	// Reflected so Blueprint equality and reflected containers compare handles by value.
+	UPROPERTY()
 	int32 Index = INDEX_NONE;
+
+	UPROPERTY()
 	uint32 Serial = 0;
 };
 

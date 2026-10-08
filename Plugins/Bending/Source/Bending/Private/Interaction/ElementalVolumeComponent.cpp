@@ -32,6 +32,10 @@ void UElementalVolumeComponent::Activate(bool bReset)
 	Super::Activate(bReset);
 	if (IsActive() && HasBegunPlay())
 	{
+		if (bReset)
+		{
+			UnregisterVolume();
+		}
 		RegisterVolume();
 	}
 }
@@ -61,14 +65,19 @@ FVector UElementalVolumeComponent::GetWorldCapsuleHalfAxis() const
 
 void UElementalVolumeComponent::RegisterVolume()
 {
-	if (IsVolumeRegistered())
-	{
-		return;
-	}
 	UBendingInteractionSubsystem* Subsystem = GetInteractionSubsystem();
 	if (!Subsystem)
 	{
 		return;
+	}
+	if (Subsystem->IsValidVolume(Handle))
+	{
+		// A spent slot from a previous life of a pooled actor is replaced by a fresh one.
+		if (!Subsystem->IsVolumeDepleted(Handle))
+		{
+			return;
+		}
+		UnregisterVolume();
 	}
 
 	FElementalVolumeState State = InitialState;

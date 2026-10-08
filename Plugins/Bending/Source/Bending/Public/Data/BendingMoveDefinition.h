@@ -6,6 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "BendingMoveDefinition.generated.h"
 
+class AActor;
 class UAnimMontage;
 class UBendingGameplayAbility;
 

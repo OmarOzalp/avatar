@@ -232,6 +232,12 @@ bool UBendingInteractionSubsystem::IsValidVolume(FElementalVolumeHandle Handle) 
 	return FindSlot(Handle) != nullptr;
 }
 
+bool UBendingInteractionSubsystem::IsVolumeDepleted(FElementalVolumeHandle Handle) const
+{
+	const FVolumeSlot* Slot = FindSlot(Handle);
+	return Slot && Slot->bDepleted;
+}
+
 FElementalVolumeState* UBendingInteractionSubsystem::GetVolume(FElementalVolumeHandle Handle)
 {
 	FVolumeSlot* Slot = FindSlot(Handle);
@@ -352,9 +358,10 @@ void UBendingInteractionSubsystem::StepSimulation(double DeltaSeconds)
 
 void UBendingInteractionSubsystem::SyncFromOwners(double FrameSeconds)
 {
+	// SubstanceAtFrameStart is reset only after reporting (SyncToOwners), so changes made between ticks
+	// (TransferHeat from gameplay freezing a whip) still reach the owner.
 	for (FVolumeSlot& Slot : Volumes)
 	{
-		Slot.SubstanceAtFrameStart = Slot.State.Substance;
 		if (Slot.bOwned && !Slot.bDepleted)
 		{
 			if (UElementalVolumeComponent* Owner = Slot.Owner.Get())

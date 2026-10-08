@@ -155,6 +155,13 @@ Debug: `Bending.Interaction.DebugDraw 1` draws every volume colored by substance
 - Montages load asynchronously when a discipline is granted, not at activation.
 - Commit assets through Git LFS (`.gitattributes` is set up).
 
+## Multiplayer notes (single player today)
+
+The GAS layer is network-shaped: abilities are `LocalPredicted`, the ability system replicates in `Mixed` mode, and attributes replicate. What still has to change before online play:
+- Granted moves and disciplines are only tracked with authority. Owning clients would need to rebuild `GrantedMoves` from replicated ability specs, since each spec's source object is its move.
+- Input reaches abilities locally only. Server-side charge timing would need replicated input events.
+- `SpendChiForEnergy` returns 0 without authority. Element physics is meant to run on the server.
+
 ## Next milestones
 
 1. **Pooling**: `UBendingPoolSubsystem` for element actors. Niagara uses its own component pooling (`ENCPoolMethod::AutoRelease`).
