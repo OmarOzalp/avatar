@@ -14,7 +14,7 @@ inline void* operator new(decltype(sizeof(0)), void* Where) noexcept { return Wh
 
 namespace
 {
-	constexpr int PlayerFields = 40;
+	constexpr int PlayerFields = 50;
 	constexpr int BodyStride = 21;
 	constexpr int VolumeStride = 18;
 	constexpr int WhipStride = 6;
@@ -63,9 +63,10 @@ SB_EXPORT(sb_set_input) void SbSetInput(double MoveForward, double MoveRight, do
 	GInput.MoveRight = MoveRight;
 	GInput.CameraLocationCm = FVec3(CamX, CamY, CamZ);
 	GInput.CameraForward = FVec3(DirX, DirY, DirZ);
-	for (int Slot = 0; Slot < 4; ++Slot)
+	// Bits 0-3: LMB, RMB, Q, E; bit 4 jump, bit 5 sprint; bit 6: F (signature).
+	for (int Slot = 0; Slot < static_cast<int>(ETechniqueSlot::Count); ++Slot)
 	{
-		GInput.bSlotHeld[Slot] = (Buttons >> Slot) & 1;
+		GInput.bSlotHeld[Slot] = (Buttons >> (Slot < 4 ? Slot : Slot + 2)) & 1;
 	}
 	GInput.bJump = (Buttons >> 4) & 1;
 	GInput.bSprint = (Buttons >> 5) & 1;
@@ -124,6 +125,17 @@ SB_EXPORT(sb_player) double* SbPlayer()
 	O[37] = S.Whip.IsActive() ? S.Whip.GetMassKg(S.World) : 0.0;
 	O[38] = S.Whip.IsActive() && S.Whip.IsAnyFrozen(S.World) ? 1.0 : 0.0;
 	O[39] = static_cast<double>(S.Whip.GetState());
+	// Tornado (age < 0: none), air scooter, jet dash.
+	O[40] = S.Tornado.bActive ? S.Tornado.AgeS : -1.0;
+	O[41] = S.Tornado.CenterCm.X;
+	O[42] = S.Tornado.CenterCm.Y;
+	O[43] = S.Tornado.CenterCm.Z;
+	O[44] = S.Tuning.TornadoRadiusCm;
+	O[45] = S.Tornado.FireKg;
+	O[46] = P.bScooter ? 1.0 : 0.0;
+	O[47] = P.DashTimeS;
+	O[48] = S.Tornado.LifetimeS;
+	O[49] = 0.0;
 	return GPlayer;
 }
 
@@ -309,7 +321,8 @@ SB_EXPORT(sb_pack_events) int SbPackEvents()
 	{
 		const FSandboxEvent& E = S.FrameEvents[Index];
 		double* O = &GEvents[Index * EventStride];
-		O[0] = static_cast<double>(E.Type);
+		// Presentation effects are numbered from 100, after the simulation's reaction types.
+		O[0] = E.Effect != ESandboxEffect::None ? 100.0 + static_cast<double>(E.Effect) : static_cast<double>(E.Type);
 		O[1] = E.LocationCm.X;
 		O[2] = E.LocationCm.Y;
 		O[3] = E.LocationCm.Z;

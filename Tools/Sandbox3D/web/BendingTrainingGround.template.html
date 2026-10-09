@@ -156,7 +156,7 @@ body {
 #frames .cancel { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); opacity: 0.8; }
 #frames .cursor { position: absolute; top: -2px; bottom: -2px; width: 3px; background: #fff; box-shadow: 0 0 6px #fff; border-radius: 2px; }
 #frames.idle > i { opacity: 0.25; }
-#slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+#slots { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
 .slot {
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -301,11 +301,11 @@ body {
   right: 16px;
   bottom: calc(150px + env(safe-area-inset-bottom, 0px));
   display: grid;
-  grid-template-columns: repeat(3, 58px);
+  grid-template-columns: repeat(4, 54px);
   gap: 8px;
 }
 .pad {
-  height: 58px;
+  height: 54px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: rgba(13,18,20,0.6);
@@ -383,6 +383,7 @@ body {
     <button class="pad" data-jump="1" type="button">Jump</button>
     <button class="pad" data-slot="2" type="button">Q</button>
     <button class="pad" data-slot="3" type="button">E</button>
+    <button class="pad" data-slot="4" type="button">F</button>
     <button class="pad" data-sprint="1" type="button">Run</button>
   </div>
 </div>
@@ -401,7 +402,8 @@ body {
     <div class="controls" id="controls-list">
       <kbd>W A S D</kbd><span>Move · <kbd>Shift</kbd> run · <kbd>Space</kbd> jump · mouse to look</span>
       <kbd>1 2 3 4</kbd><span>Water, Earth, Fire, Air stance</span>
-      <kbd>LMB RMB Q E</kbd><span>The four techniques of your stance (shown at the bottom)</span>
+      <kbd>LMB RMB Q E</kbd><span>Your stance's techniques (shown at the bottom)</span>
+      <kbd>F</kbd><span>Signature move: Ice Daggers, Earthquake, Ring of Fire, Tornado</span>
       <kbd>H · R · Esc</kbd><span>Technique list · reset the field · free the mouse</span>
     </div>
     <button class="go" id="play" type="button">Start training</button>
@@ -431,10 +433,10 @@ const $ = (id) => document.getElementById(id);
 const ELEMENTS = { 2: { name: 'Water', key: '1', css: 'var(--water)', hex: 0x4aa8e0 }, 1: { name: 'Earth', key: '2', css: 'var(--earth)', hex: 0x86b44c },
   3: { name: 'Fire', key: '3', css: 'var(--fire)', hex: 0xec5b3c }, 4: { name: 'Air', key: '4', css: 'var(--air)', hex: 0xe9c45c } };
 const STANCE_ORDER = [2, 1, 3, 4];
-const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E'];
+const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E', 'F'];
 const SUB = { EARTH: 1, WATER: 2, ICE: 3, STEAM: 4, FIRE: 5, AIR: 6 };
 const PROP = { STONE: 0, ROCK: 1, BOULDER: 2, CLOD: 3, DUMMY: 4, BRAZIER: 5, ICE: 6 };
-const PROJ = { FIRE: 0, AIR: 1, WATER: 2, GROUND_FLAME: 3, SPRAY: 4 };
+const PROJ = { FIRE: 0, AIR: 1, WATER: 2, GROUND_FLAME: 3, SPRAY: 4, ICE_SHARD: 5 };
 const REACTION = ['None', 'Evaporation', 'Condensation', 'Melting', 'Freezing', 'Oxygenation', 'Saturation', 'MudFormed', 'Deflection', 'Erosion', 'Extinguished'];
 const SHORT_NAMES = { 'Water Whip': 'Whip', 'Freeze / Thaw': 'Freeze', 'Release': 'Release', 'Water Blast': 'Throw', 'Rock Throw': 'Rock',
   'Earth Wall': 'Wall', 'Raise Ground': 'Raise', 'Lower Ground': 'Dig', 'Fire Blast': 'Blast', 'Flame Stream': 'Stream',
@@ -750,12 +752,24 @@ function start() {
   terrainGeo.setAttribute('wet', wetAttr);
   terrainGeo.setIndex(new THREE.BufferAttribute(index, 1));
   const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0, envMapIntensity: 0.55 });
+  // An earthquake's shockwave: a ring that rolls out through the ground (x, z, start time, strength).
+  const quakeU = { value: new THREE.Vector4(0, 0, -100, 0) };
   terrainMat.onBeforeCompile = (sh) => {
     sh.uniforms.uDetail = { value: groundDetail };
     sh.uniforms.uMacro = { value: groundMacro };
+    sh.uniforms.uQuake = quakeU;
+    sh.uniforms.uTime = uTime;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float wet;\nvarying float vWet;\nvarying vec3 vGround;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWet = wet;\nvGround = (modelMatrix * vec4(position, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nattribute float wet;\nvarying float vWet;\nvarying vec3 vGround;\nuniform vec4 uQuake;\nuniform float uTime;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vWet = wet;
+        vGround = (modelMatrix * vec4(position, 1.0)).xyz;
+        float qAge = uTime - uQuake.z;
+        if (qAge > 0.0 && qAge < 2.5) {
+          float qd = distance(position.xz, uQuake.xy);
+          float front = qd - qAge * 11.0;
+          transformed.y += exp(-front * front * 1.2) * uQuake.w * 0.4 * exp(-qAge * 1.4) * smoothstep(0.0, 1.5, qd);
+        }`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform sampler2D uDetail;\nuniform sampler2D uMacro;\nvarying float vWet;\nvarying vec3 vGround;')
       .replace('#include <color_fragment>', `#include <color_fragment>
@@ -1113,7 +1127,7 @@ function start() {
   const legR = leg(0.105), legL = leg(-0.105);
   scene.add(human);
 
-  const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpM = new THREE.Matrix4(), tmpS = new THREE.Vector3();
+  const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpM = new THREE.Matrix4(), tmpS = new THREE.Vector3(), tmpE = new THREE.Euler();
   const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0), ZERO_SCALE = new THREE.Vector3(0, 0, 0);
 
   // ---------------------------------------------------------------- Bodies (props, thrown rocks)
@@ -1340,7 +1354,114 @@ function start() {
   for (let i = 0; i < 4; i++) { const l = new THREE.PointLight(lin(0xff8a3c), 0, 11, 2); scene.add(l); fireLights.push(l); }
 
   // ---------------------------------------------------------------- Air, water balls
-  const pools = { air: [], ring: [], water: [] };
+  const pools = { air: [], ring: [], water: [], ice: [], iceTrail: [] };
+  const shardMat = toon(0xd2f6ff, { emissive: lin(0x3aa8ff), emissiveIntensity: 0.55 }, 0.9);
+  const shardTrailMat = new THREE.MeshBasicMaterial({ color: lin(0x7fd8ff), transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false });
+  const geoShard = new THREE.OctahedronGeometry(1, 0);
+  // Swirling air: bright streaks scrolling round and up (tornado funnels, the air scooter's ball). With uFire, flame bands.
+  function swirlMaterial(speed, bands, body) {
+    return new THREE.ShaderMaterial({
+      uniforms: { uTime, uFire: { value: 0 }, uFade: { value: 1 }, uBody: { value: body } },
+      vertexShader: `varying vec2 vUv; varying float vRim;
+        void main() { vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vec3 n = normalize(normalMatrix * normal);
+          vRim = 1.0 - abs(dot(n, normalize(-mv.xyz))); gl_Position = projectionMatrix * mv; }`,
+      fragmentShader: GLSL_NOISE + `
+        uniform float uTime;
+        uniform float uFire;
+        uniform float uFade;
+        uniform float uBody;
+        varying vec2 vUv;
+        varying float vRim;
+        void main() {
+          // Cel-shaded wind: a soft body, hard-edged bright bands spiralling round it, and a darker silhouette line.
+          float n = snoise(vec3(vUv.x * 5.0, vUv.y * 3.0 - uTime * 0.8, uTime * 0.3));
+          float streak = fract(vUv.x * ${bands.toFixed(1)} + vUv.y * 1.6 - uTime * ${speed.toFixed(2)} + n * 0.25);
+          float band = step(0.06, streak) * (1.0 - step(0.42, streak));
+          float edge = smoothstep(0.0, 0.1, vUv.y) * (1.0 - smoothstep(0.85, 1.0, vUv.y));
+          float outline = smoothstep(0.8, 0.9, vRim);
+          float a = clamp(uBody + band * 0.55 + outline * 0.35, 0.0, 1.0) * edge * uFade;
+          vec3 air = mix(vec3(0.58, 0.67, 0.8), vec3(0.97, 0.99, 1.0), band);
+          air = mix(air, vec3(0.42, 0.52, 0.66), outline * (1.0 - band));
+          vec3 fire = mix(vec3(0.95, 0.28, 0.04), vec3(1.0, 0.86, 0.32), band);
+          fire = mix(fire, vec3(0.55, 0.1, 0.02), outline * (1.0 - band));
+          gl_FragColor = vec4(mix(air, fire * 1.5, uFire), a);
+          #include <tonemapping_fragment>
+          #include <encodings_fragment>
+        }`,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    });
+  }
+  const funnelGeo = new THREE.CylinderGeometry(3.0, 0.45, 9, 40, 12, true).translate(0, 4.5, 0);
+  const tornadoGroup = new THREE.Group();
+  const funnelOuter = new THREE.Mesh(funnelGeo, swirlMaterial(1.4, 5, 0.3));
+  const funnelInner = new THREE.Mesh(funnelGeo, swirlMaterial(2.3, 3, 0.38));
+  funnelInner.scale.set(0.68, 0.96, 0.68);
+  funnelOuter.renderOrder = funnelInner.renderOrder = 4;
+  tornadoGroup.add(funnelOuter, funnelInner);
+  tornadoGroup.visible = false;
+  scene.add(tornadoGroup);
+  // Debris whirling up the funnel: clods and grass, or embers in a fire tornado (positions set each frame).
+  const DEBRIS = 46;
+  const debrisMat = toon(0x8a6a48, {}, 0.3);
+  const debris = new THREE.InstancedMesh(new THREE.TetrahedronGeometry(1, 0), debrisMat, DEBRIS);
+  debris.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  debris.frustumCulled = false;
+  debris.visible = false;
+  scene.add(debris);
+  // Earthquake: a shockwave ring racing over the ground and two rings of rock that punch up as it passes.
+  const QUAKE_ROCKS = 30;
+  const quakeRing = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 72, 1).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: lin(0xf3dca8), transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+  quakeRing.visible = false;
+  scene.add(quakeRing);
+  const quakeRocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), toon(0x8d7f6e, {}, 0.25), QUAKE_ROCKS);
+  quakeRocks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  quakeRocks.frustumCulled = false;
+  quakeRocks.visible = false;
+  quakeRocks.castShadow = true;
+  scene.add(quakeRocks);
+  const quakeFx = { t: -1, x: 0, y: 0, z: 0, rocks: [] };
+  for (let i = 0; i < QUAKE_ROCKS; i++) {
+    const ring = i < 12 ? 0 : 1, n = ring ? QUAKE_ROCKS - 12 : 12, k = ring ? i - 12 : i;
+    quakeFx.rocks.push({ a: (k + 0.5 * ring) / n * Math.PI * 2 + (Math.random() - 0.5) * 0.2, r: (ring ? 5.2 : 2.6) + (Math.random() - 0.5) * 0.6,
+      size: (ring ? 0.32 : 0.42) * (0.75 + Math.random() * 0.5), spin: Math.random() * 6, y: 0 });
+  }
+  function updateQuake(dt) {
+    if (quakeFx.t < 0) return;
+    quakeFx.t += dt;
+    const t = quakeFx.t, waveSpeed = 17;
+    const front = 0.4 + t * waveSpeed;
+    quakeRing.visible = front < 9.5;
+    quakeRing.position.set(quakeFx.x, quakeFx.y + 0.04, quakeFx.z);
+    quakeRing.scale.setScalar(front);
+    quakeRing.material.opacity = 0.85 * (1 - smooth01(front / 9.5));
+    quakeRocks.visible = true;
+    let alive = false;
+    quakeFx.rocks.forEach((rock, i) => {
+      // Each rock bursts up when the wave reaches it, overshoots, then sinks back into the ground.
+      const since = t - rock.r / waveSpeed;
+      let lift = 0;
+      if (since > 0) lift = since < 0.12 ? since / 0.12 * 1.15 : Math.max(0, 1.15 - (since - 0.12) * 0.9) * (1 + 0.12 * Math.sin(since * 30) * Math.exp(-since * 6));
+      if (since < 1.6) alive = true;
+      const px = quakeFx.x + Math.cos(rock.a) * rock.r, pz = quakeFx.z + Math.sin(rock.a) * rock.r;
+      const ground = heightAt(px * 100, -pz * 100) / 100;
+      tmpM.makeRotationFromEuler(tmpE.set(0.4 + rock.spin, rock.a, 0.3 * rock.spin));
+      const s = rock.size * Math.min(1, lift * 1.4);
+      tmpM.scale(tmpV2.set(s, s * 1.5, s));
+      tmpM.setPosition(px, ground - rock.size * 0.9 + lift * rock.size * 1.6, pz);
+      quakeRocks.setMatrixAt(i, tmpM);
+      if (since > 0 && since < dt + 1e-6) {
+        emit(px, ground + 0.1, pz, 6, 0xa4815a, 1.4, 2.4, 9, 0.8);
+        smoke.spawn(px, ground + 0.2, pz, Math.cos(rock.a) * 1.2, 0.5, Math.sin(rock.a) * 1.2, 0.35, 1.3, 0.4, 1.0 + Math.random() * 0.5, 0.1, 1.2);
+      }
+    });
+    quakeRocks.instanceMatrix.needsUpdate = true;
+    if (!alive && front >= 9.5) { quakeFx.t = -1; quakeRocks.visible = false; quakeRing.visible = false; }
+  }
+  const scooterBall = new THREE.Mesh(new THREE.SphereGeometry(0.42, 28, 18), swirlMaterial(3.0, 4, 0.38));
+  scooterBall.visible = false;
+  scooterBall.renderOrder = 4;
+  scene.add(scooterBall);
   const airMat = new THREE.MeshBasicMaterial({ color: lin(0xe6f6ff), transparent: true, opacity: 0.08, depthWrite: false });
   const ringMat = new THREE.MeshBasicMaterial({ color: lin(0xf2fbff), transparent: true, opacity: 0.55, depthWrite: false });
   function waterSurfaceMaterial(extra) {
@@ -1928,7 +2049,7 @@ function start() {
   // ---------------------------------------------------------------- HUD
   const techniques = {};
   for (const element of STANCE_ORDER) {
-    techniques[element] = [0, 1, 2, 3].map((slot) => {
+    techniques[element] = [0, 1, 2, 3, 4].map((slot) => {
       const id = W.sb_find_technique(element, slot);
       if (!id) return null;
       const info = f64(W.sb_technique_info(id), 8);
@@ -2009,9 +2130,9 @@ function start() {
 
   // ---------------------------------------------------------------- Input
   const keys = new Set();
-  const slotHeld = [false, false, false, false];
+  const slotHeld = [false, false, false, false, false];
   // A tap shorter than a frame still reaches the simulation: presses latch until the next frame is sent.
-  const slotTapped = [false, false, false, false];
+  const slotTapped = [false, false, false, false, false];
   let jumpHeld = false, jumpTapped = false, sprintToggle = false;
   let stanceRequest = 0;
   let yaw = 0, pitch = -0.18;
@@ -2023,6 +2144,7 @@ function start() {
     if (KEY_STANCE[e.code]) stanceRequest = KEY_STANCE[e.code];
     if (e.code === 'KeyQ') slotHeld[2] = slotTapped[2] = true;
     if (e.code === 'KeyE') slotHeld[3] = slotTapped[3] = true;
+    if (e.code === 'KeyF') slotHeld[4] = slotTapped[4] = true;
     if (e.code === 'Space') jumpTapped = true;
     if (e.code === 'KeyR' && !e.repeat) { W.sb_reset(); updateTerrainRect(0, 0, SX - 1, SY - 1); flushTerrain(); seenSerial = 0; pushLog('Training ground reset'); }
     if (e.code === 'Space') e.preventDefault();
@@ -2032,6 +2154,7 @@ function start() {
     keys.delete(e.code);
     if (e.code === 'KeyQ') slotHeld[2] = false;
     if (e.code === 'KeyE') slotHeld[3] = false;
+    if (e.code === 'KeyF') slotHeld[4] = false;
   });
   window.addEventListener('blur', () => { keys.clear(); slotHeld.fill(false); });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -2125,7 +2248,7 @@ function start() {
   resize();
 
   const P = { x: 0, y: 0, z: 0 };
-  let player = f64(W.sb_player(), 40);
+  let player = f64(W.sb_player(), 50);
   yaw = player[3];
   let last = performance.now();
   let fpsFrames = 0, fpsTime = 0, moistureTimer = 0;
@@ -2160,7 +2283,7 @@ function start() {
 
   function tick(dt, now, render = true) {
 
-    player = f64(W.sb_player(), 40);
+    player = f64(W.sb_player(), 50);
     P.x = player[0]; P.y = player[1]; P.z = player[2];
     computeCamera();
 
@@ -2175,7 +2298,7 @@ function start() {
     const jump = playing && (keys.has('Space') || jumpHeld || jumpTapped);
     const sprint = playing && (keys.has('ShiftLeft') || keys.has('ShiftRight') || sprintToggle);
     let buttons = 0;
-    if (playing) for (let s = 0; s < 4; s++) if (slotHeld[s] || slotTapped[s]) buttons |= 1 << s;
+    if (playing) for (let s = 0; s < 5; s++) if (slotHeld[s] || slotTapped[s]) buttons |= 1 << (s < 4 ? s : s + 2);
     slotTapped.fill(false);
     jumpTapped = false;
     if (jump) buttons |= 16;
@@ -2184,7 +2307,7 @@ function start() {
     stanceRequest = 0;
     W.sb_advance(dt);
 
-    player = f64(W.sb_player(), 40);
+    player = f64(W.sb_player(), 50);
     P.x = player[0]; P.y = player[1]; P.z = player[2];
     computeCamera();
     toThree(camPos.x, camPos.y, camPos.z, camera.position);
@@ -2225,6 +2348,8 @@ function start() {
     shake *= Math.exp(-dt * 7);
     updateDecor();
     wadeRipples(dt);
+    updateTornadoVisual(dt);
+    updateQuake(dt);
     stepFloats(dt);
     updateHud();
     stepLog();
@@ -2239,6 +2364,49 @@ function start() {
       $('vol').textContent = stats[0] + ' volumes';
       $('contacts').textContent = stats[1] + ' contacts';
       fpsFrames = 0; fpsTime = 0;
+    }
+  }
+
+  function updateTornadoVisual(dt) {
+    const age = player[40];
+    if (age < 0) { tornadoGroup.visible = false; debris.visible = false; return; }
+    const life = player[48], fire = Math.min(1, player[45] / 0.3);
+    const strength = smooth01(age / 0.4) * (1 - smooth01((age - (life - 0.6)) / 0.6));
+    tornadoGroup.visible = true;
+    toThree(player[41], player[42], player[43], tornadoGroup.position);
+    const r = player[44] / 100 / 2.8;
+    tornadoGroup.scale.set(r * (0.4 + 0.6 * strength), 0.3 + 0.7 * strength, r * (0.4 + 0.6 * strength));
+    funnelOuter.rotation.y -= dt * 5;
+    funnelInner.rotation.y -= dt * 8;
+    for (const f of [funnelOuter, funnelInner]) { f.material.uniforms.uFire.value = fire; f.material.uniforms.uFade.value = strength; }
+    // Debris climbing the funnel on a spiral, faster near the narrow foot.
+    const c = tornadoGroup.position;
+    const t = uTime.value, sx = tornadoGroup.scale.x, sy = tornadoGroup.scale.y;
+    debris.visible = true;
+    debrisMat.color.copy(lin(fire > 0.3 ? 0xffb347 : 0x8a6a48));
+    debrisMat.emissive = debrisMat.emissive || new THREE.Color();
+    debrisMat.emissive.copy(lin(0xff5a10)).multiplyScalar(fire * 0.8);
+    for (let i = 0; i < DEBRIS; i++) {
+      const h = ((i * 0.6180339 + t * (0.18 + (i % 5) * 0.03)) % 1) * 8.4;
+      const rr = (0.45 + (3.0 - 0.45) * (h / 9)) * sx * (1.08 + 0.15 * Math.sin(i * 7.1));
+      const a = i * 2.399 + t * (7.5 - h * 0.45);
+      tmpM.makeRotationFromEuler(tmpE.set(t * 3 + i, t * 2.3 + i * 0.7, 0));
+      const size = (0.05 + (i % 4) * 0.025) * (0.5 + 0.5 * strength);
+      tmpM.scale(tmpV2.set(size, size, size));
+      tmpM.setPosition(c.x + Math.cos(a) * rr, c.y + h * sy, c.z + Math.sin(a) * rr);
+      debris.setMatrixAt(i, tmpM);
+    }
+    debris.instanceMatrix.needsUpdate = true;
+    // Dust whirling at its foot; flames climbing a fire tornado.
+    for (let k = 0; k < 2; k++) if (Math.random() < 0.8) {
+      const a = Math.random() * Math.PI * 2, rr = 0.6 + Math.random() * 1.2;
+      smoke.spawn(c.x + Math.cos(a) * rr, c.y + 0.1, c.z + Math.sin(a) * rr, -Math.sin(a) * 4, 0.8 + Math.random(), Math.cos(a) * 4, 0.3, 1.2, 0.35, 1 + Math.random() * 0.6, 0.5, 0.8);
+    }
+    if (fire > 0) {
+      for (let i = 0; i < 3; i++) {
+        const a = Math.random() * Math.PI * 2, h = Math.random() * 7 * strength, rr = 0.35 + h * 0.28;
+        flames.spawn(c.x + Math.cos(a) * rr, c.y + h, c.z + Math.sin(a) * rr, -Math.sin(a) * 6, 2, Math.cos(a) * 6, 0.45 + h * 0.06, 0.1, 0.9, 0.35, 1, 1, FLAME_SHAPE);
+      }
     }
   }
 
@@ -2304,8 +2472,17 @@ function start() {
   const ELEMENT_POP = { 2: 0x66c8ff, 1: 0x9ccf5b, 3: 0xff7a3a, 4: 0xffd36a };
   function updateHuman(dt) {
     toThree(P.x, P.y, P.z, human.position);
-    human.rotation.y = player[3];
     const t = uTime.value;
+    // Riding the air scooter: perched on a spinning ball of air.
+    const scooting = player[46] > 0;
+    body.position.y = spring('ride', scooting ? 0.55 : 0, 14, dt);
+    scooterBall.visible = scooting;
+    if (scooting) {
+      scooterBall.position.copy(human.position);
+      scooterBall.position.y += 0.42;
+      scooterBall.rotation.x += dt * 14;
+      if (Math.random() < 0.5) emit(scooterBall.position.x + rnd() * 0.6, scooterBall.position.y - 0.3, scooterBall.position.z + rnd() * 0.6, 1, 0xeef7ff, 0.8, 0.2, 0, 0.4);
+    }
     const speed = Math.hypot(player[4], player[5]) / 100;
     const vz = player[6] / 100;
     const grounded = player[7] > 0;
@@ -2341,6 +2518,9 @@ function start() {
 
     // The pose this frame: idle stance per element, blended with running, overridden by techniques.
     const name = (techById[hold] || techById[move] || {}).name || '';
+    // The ring of fire is a spin kick: one full turn through the wind-up.
+    const spin = name === 'Ring of Fire' && phase === 1 ? progress * progress * Math.PI * 2 : 0;
+    human.rotation.y = player[3] + spin;
     const casting = phase === 1 || phase === 2 || phase === 3 || hold > 0;
     let lean = -0.08 * run, twist = 0, crouch = 0, lunge = 0;
     let rDir, rBend, lDir, lBend;
@@ -2363,7 +2543,10 @@ function start() {
       crouch = 0.02;
       if (!casting && !whip) { rDir = V(-sw * 0.7, -0.75, 0.25); rBend = 1.3; lDir = V(sw * 0.7, -0.75, -0.25); lBend = 1.3; }
     }
-    if (!grounded) {
+    if (scooting && !casting) {
+      crouch = 0.12; lean = -0.15; rp = lp = 0.15; spreadR = spreadL = 0.14; kneeR = kneeL = 0.5;
+      rDir = V(0.1, -0.25, 0.95); lDir = V(0.1, -0.25, -0.95); rBend = lBend = 0.3;
+    } else if (!grounded) {
       const rising = vz > 0;
       rp = rising ? 0.7 : 0.25; lp = rising ? 0.2 : -0.1; kneeR = rising ? 1.4 : 0.5; kneeL = rising ? 0.9 : 0.3;
       if (!casting) { rDir = V(0.2, 0.3, 0.8); rBend = 0.6; lDir = V(0.2, 0.3, -0.8); lBend = 0.6; }
@@ -2439,6 +2622,25 @@ function start() {
         case 'Ground Flame':
           rDir = V(aim.x, Math.min(aim.y, -0.4), aim.z + 0.2).normalize(); rBend = 0.05; crouch = 0.1;
           break;
+        case 'Ice Daggers':
+          if (wind) { rDir = V(0.6, -0.1, 0.25); rBend = 1.8; lDir = V(0.6, -0.1, -0.25); lBend = 1.8; crouch = 0.08; }
+          else { rDir = aimR; rBend = 0.02; lDir = aimL; lBend = 0.02; lunge = 0.15; lean = -0.15; }
+          break;
+        case 'Earthquake':
+          if (wind) { rp = 1.0 * ease; kneeR = 1.7 * ease; rDir = V(0.2, 0.6 * ease, 0.6); lDir = V(0.2, 0.6 * ease, -0.6); rBend = lBend = 0.6; }
+          else { crouch = 0.28; spreadR = spreadL = 0.36; rp = 0.2; kneeR = 0.7; rDir = V(0.5, -0.8, 0.55); lDir = V(0.5, -0.8, -0.55); rBend = lBend = 0.1; lean = -0.2; }
+          break;
+        case 'Ring of Fire':
+          if (wind) { crouch = 0.12; rDir = V(-0.2, -0.3, 0.9); lDir = V(0.2, -0.3, -0.9); rBend = lBend = 0.6; }
+          else { rp = 1.25; kneeR = 0.15; spreadR = 0.5; rDir = V(0.0, 0.1, 1.0); lDir = V(0.0, 0.1, -1.0); rBend = lBend = 0.1; }
+          break;
+        case 'Jet Dash':
+          lean = -0.55; rDir = V(-0.7, -0.6, 0.35); lDir = V(-0.7, -0.6, -0.35); rBend = lBend = 0.2; rp = -0.35; lp = -0.15; kneeR = 0.6; kneeL = 0.3;
+          break;
+        case 'Tornado':
+          if (wind) { rDir = V(Math.cos(t * 14) * 0.5, 0.8, 0.45 + Math.sin(t * 14) * 0.3); lDir = V(-Math.cos(t * 14) * 0.5, 0.8, -0.45 - Math.sin(t * 14) * 0.3); rBend = lBend = 0.4; crouch = 0.08; }
+          else { rDir = V(aim.x, 0.8, 0.6); lDir = V(aim.x, 0.8, -0.6); rBend = lBend = 0.15; }
+          break;
         case 'Air Jump':
           if (wind) { crouch = 0.25 * ease; rDir = V(-0.3, -0.9, 0.5); lDir = V(-0.3, -0.9, -0.5); rBend = lBend = 0.4; }
           else { rDir = V(0.2, 0.9, 0.5); lDir = V(0.2, 0.9, -0.5); rBend = lBend = 0.2; }
@@ -2513,7 +2715,7 @@ function start() {
   function updateVolumes(t, dt) {
     const count = W.sb_pack_volumes();
     const v = f64(W.sb_volumes(), count * VSTRIDE);
-    let na = 0, nw = 0;
+    let na = 0, nw = 0, ni = 0;
     fireSpots.length = 0;
     const rate = Math.min(dt * 60, 3);
     const liveSprays = new Set();
@@ -2598,6 +2800,22 @@ function start() {
         ring.material.opacity = Math.min(0.6, speed / 40);
         if (Math.random() < 0.5 * rate) emit(tmpV.x + rnd() * r, tmpV.y + rnd() * r, tmpV.z + rnd() * r, 1, 0xeef7ff, 0.3, 0.1, 0, 0.35);
         na++;
+      } else if (sub === SUB.ICE && owner === 3) {
+        // An ice dagger: a crystal pointing where it flies, glittering.
+        // Drawn larger than its 5 cm of ice so it reads at range, with a streak of cold light behind it.
+        const m = pooled(pools.ice, ni, () => { const mesh = new THREE.Mesh(geoShard, shardMat); mesh.castShadow = true; return mesh; });
+        const trail = pooled(pools.iceTrail, ni, () => new THREE.Mesh(geoShard, shardTrailMat));
+        m.position.copy(tmpV);
+        tmpV2.set(vx, vy, vz);
+        if (speed > 0.01) { tmpV2.normalize(); m.quaternion.setFromUnitVectors(UP, tmpV2); trail.quaternion.copy(m.quaternion); }
+        const rr = Math.max(r, 0.04);
+        m.scale.set(rr * 1.8, rr * 8, rr * 1.8);
+        const streak = Math.min(1, speed / 25);
+        trail.position.copy(tmpV).addScaledVector(tmpV2, -rr * (5 + 9 * streak));
+        trail.scale.set(rr * 1.1, rr * (4 + 10 * streak), rr * 1.1);
+        trail.visible = speed > 2;
+        if (Math.random() < 0.9 * rate) emit(tmpV.x, tmpV.y, tmpV.z, 2, 0xa8ecff, 0.35, 0.15, 0, 0.35);
+        ni++;
       } else if (sub === SUB.WATER && owner === 3) {
         if (kind === PROJ.SPRAY) {
           // Spray is a cloud of droplets: thrown out in a cone when it breaks off the whip, trailing more as it flies.
@@ -2622,7 +2840,7 @@ function start() {
     for (const slot of sprayAges.keys()) if (!liveSprays.has(slot)) sprayAges.delete(slot);
     for (const slot of fireMemo.keys()) if (!liveFires.has(slot)) fireMemo.delete(slot);
     liveFires.clear();
-    hideFrom(pools.air, na); hideFrom(pools.ring, na); hideFrom(pools.water, nw);
+    hideFrom(pools.air, na); hideFrom(pools.ring, na); hideFrom(pools.water, nw); hideFrom(pools.ice, ni); hideFrom(pools.iceTrail, ni);
     fireSpots.sort((a, b) => a.p.distanceToSquared(camera.position) - b.p.distanceToSquared(camera.position));
     fireLights.forEach((light, i) => {
       const s = fireSpots[i];
@@ -2744,12 +2962,45 @@ function start() {
     }
   }
 
+  // A technique's moment (numbered from 100 by the sandbox).
+  function techniqueEffect(kind, x, y, z) {
+    switch (kind) {
+      case 1: // ice dagger shatters
+        emit(x, y, z, 14, 0xe6f8ff, 3, 1.6, 6, 0.6);
+        break;
+      case 2: { // earthquake: the ground ripples outward, dust jumps
+        quakeU.value.set(x, z, uTime.value, 1);
+        Object.assign(quakeFx, { t: 0, x, y, z });
+        kick(0.8);
+        for (let i = 0; i < 80; i++) {
+          const a = Math.random() * Math.PI * 2, r = 0.8 + Math.random() * 7.5, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+          emit(px, heightAt(px * 100, -pz * 100) / 100 + 0.05, pz, 1, 0xa4815a, 1.0, 2.6, 8, 1.0);
+        }
+        for (let i = 0; i < 12; i++) { const a = Math.random() * Math.PI * 2; smoke.spawn(x + Math.cos(a) * 1.5, y + 0.2, z + Math.sin(a) * 1.5, Math.cos(a) * 3, 0.6, Math.sin(a) * 3, 0.5, 1.8, 0.45, 1.4 + Math.random() * 0.6, 0.1, 1.2); }
+        floatLabel('EARTHQUAKE!', x, y + 1.9, z, 'quake');
+        break;
+      }
+      case 3: // ring of fire
+        glows.spawn(x, y, z, 0, 0, 0, 1.4, 4.5, 0.55, 0.25, 0, 0);
+        kick(0.35);
+        floatLabel('RING OF FIRE!', x, y + 1.3, z, 'ring');
+        break;
+      case 4: // jet dash
+        kick(0.3);
+        for (let i = 0; i < 16; i++) sparks.spawn(x + rnd() * 0.3, y + 0.2, z + rnd() * 0.3, rnd() * 5, Math.random() * 3, rnd() * 5, 0.05, 0.01, 1, 0.5, -2, 1.5, EMBER_SHAPE);
+        break;
+      default:
+        break;
+    }
+  }
+
   function handleEvents() {
     const n = W.sb_pack_events();
     const e = f64(W.sb_events(), n * 7);
     for (let k = 0; k < n; k++) {
       const o = k * 7, type = e[o], mass = e[o + 4];
       const x = e[o + 1] / 100, y = e[o + 3] / 100, z = -e[o + 2] / 100;
+      if (type >= 100) { techniqueEffect(type - 100, x, y, z); continue; }
       switch (REACTION[type]) {
         case 'Saturation': {
           const kx = e[o + 1], ky = e[o + 2], pond = pondAt(kx, ky, 1.05);
@@ -2864,7 +3115,7 @@ function start() {
   window.trainingGround = {
     look(dYaw, dPitch) { yaw += dYaw; pitch = Math.min(0.75, Math.max(-1.25, pitch + dPitch)); },
     face(x, y, z) { const dx = x - P.x, dy = y - P.y, dz = z - (P.z + 165); yaw = Math.atan2(dy, dx); pitch = Math.atan2(dz, Math.hypot(dx, dy)); },
-    state() { const p = f64(W.sb_player(), 40); return { x: p[0], y: p[1], z: p[2], stance: p[8], move: p[9], phase: p[10], chi: p[13], whip: p[36] > 0, whipKg: p[37] }; },
+    state() { const p = f64(W.sb_player(), 50); return { x: p[0], y: p[1], z: p[2], stance: p[8], move: p[9], phase: p[10], chi: p[13], whip: p[36] > 0, whipKg: p[37] }; },
     /** Manual clock: frames advance only through step(), exactly 1/60 s each, so captures line up with the physics. */
     manual(on) {
       if (on && manualClock === null) manualClock = performance.now();

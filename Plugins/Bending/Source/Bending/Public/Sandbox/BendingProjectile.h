@@ -20,7 +20,9 @@ enum class EBendingProjectileKind : uint8
 	/** Compressed air: flies straight, loses speed to the still air around it, dies after the kernel's air lifetime. */
 	Air,
 	/** A ball of water: falls; soaks into the soil where it lands (mud), or rejoins a pond. */
-	Water
+	Water,
+	/** An ice dagger: flies nearly straight, strikes the first body it meets with all its momentum, and shatters. */
+	IceShard
 };
 
 /**
@@ -60,6 +62,11 @@ public:
 	void SetFuel(double FuelJ, double PowerW);
 
 	EBendingProjectileKind GetKind() const { return Kind; }
+	FVector GetVelocityCmS() const { return VelocityCmS; }
+	/** Sets the velocity of matter in flight (a tornado steering it); grounded matter stays put. */
+	void SetVelocityCmS(const FVector& InVelocityCmS);
+	/** Simulated mass (kg), 0 once gone. */
+	double GetMassKg() const;
 	bool IsGrounded() const { return bGrounded; }
 
 protected:
@@ -85,12 +92,23 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Projectile", meta = (ClampMin = 0.1, Units = "s"))
 	float WaterLifetimeS = 8.f;
 
+	/** Ice daggers that hit nothing shatter after this long. */
+	UPROPERTY(EditAnywhere, Category = "Projectile", meta = (ClampMin = 0.1, Units = "s"))
+	float IceShardLifetimeS = 3.f;
+
+	/** Share of gravity an ice dagger feels (the bender carries it). */
+	UPROPERTY(EditAnywhere, Category = "Projectile", meta = (ClampMin = 0.0, ClampMax = 1.0))
+	float IceShardGravityScale = 0.3f;
+
 private:
 	UFUNCTION()
 	void HandleImpulse(FVector ImpulseKgCmS);
 
 	UFUNCTION()
 	void HandleDepleted(UElementalVolumeComponent* DepletedVolume);
+
+	/** Ice dagger: strikes a physics body between the last position and this one. True when it hit (and shattered). */
+	bool StrikeAlongPath(const FVector& From, const FVector& To, const FElementalVolumeState& State);
 
 	/** Lands, splashes or dies on contact with the ground or a pond. True when the actor was destroyed. */
 	bool HandleGroundContact(FVector& Location, const FElementalVolumeState& State);

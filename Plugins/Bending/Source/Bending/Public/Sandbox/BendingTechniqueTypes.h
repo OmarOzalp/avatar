@@ -28,6 +28,12 @@ enum class EBendingTechnique : uint8
 	AirBlast,
 	AirGust,
 	AirJump,
+	FireJet,
+	AirScooter,
+	IceDaggers,
+	Earthquake,
+	FireRing,
+	Tornado,
 
 	Count UMETA(Hidden)
 };
@@ -36,6 +42,9 @@ static_assert(static_cast<int>(EBendingTechnique::WaterWhip) == static_cast<int>
 static_assert(static_cast<int>(EBendingTechnique::RockThrow) == static_cast<int>(BendingSim::ETechnique::RockThrow), "Technique mirror out of sync");
 static_assert(static_cast<int>(EBendingTechnique::FireBlast) == static_cast<int>(BendingSim::ETechnique::FireBlast), "Technique mirror out of sync");
 static_assert(static_cast<int>(EBendingTechnique::AirJump) == static_cast<int>(BendingSim::ETechnique::AirJump), "Technique mirror out of sync");
+static_assert(static_cast<int>(EBendingTechnique::FireJet) == static_cast<int>(BendingSim::ETechnique::FireJet), "Technique mirror out of sync");
+static_assert(static_cast<int>(EBendingTechnique::IceDaggers) == static_cast<int>(BendingSim::ETechnique::IceDaggers), "Technique mirror out of sync");
+static_assert(static_cast<int>(EBendingTechnique::Tornado) == static_cast<int>(BendingSim::ETechnique::Tornado), "Technique mirror out of sync");
 static_assert(static_cast<int>(EBendingTechnique::Count) == static_cast<int>(BendingSim::ETechnique::Count), "Technique mirror out of sync");
 static_assert(static_cast<int>(EBendingElement::Earth) == static_cast<int>(BendingSim::ETechniqueElement::Earth)
 	&& static_cast<int>(EBendingElement::Water) == static_cast<int>(BendingSim::ETechniqueElement::Water)
@@ -70,10 +79,10 @@ namespace BendingTechnique
 		return BendingSim::GetTechniqueInfo(ToSim(Technique));
 	}
 
-	/** Input.Bending.Light / Heavy / Special / Utility for the Primary (LMB) / Secondary (RMB) / Special (Q) / Utility (E) slots. */
+	/** Input.Bending.Light / Heavy / Special / Utility / Signature for the Primary (LMB) / Secondary (RMB) / Special (Q) / Utility (E) / Signature (F) slots. */
 	BENDING_API FGameplayTag GetInputTag(BendingSim::ETechniqueSlot Slot);
 
-	/** Key label for the HUD: LMB, RMB, Q, E. */
+	/** Key label for the HUD: LMB, RMB, Q, E, F. */
 	BENDING_API const TCHAR* GetKeyLabel(BendingSim::ETechniqueSlot Slot);
 
 	BENDING_API FString GetDisplayName(EBendingTechnique Technique);

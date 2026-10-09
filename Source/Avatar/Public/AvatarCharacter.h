@@ -176,7 +176,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleHelpAction;
 
-	/** Move inputs (Light/Heavy/Special/Utility) and stance selection. */
+	/** Move inputs (Light/Heavy/Special/Utility/Signature) and stance selection. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UBendingInputConfig> BendingInputConfig;
 

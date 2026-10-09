@@ -1,5 +1,7 @@
 #include "Sim/BendingTechniques.h"
 
+#include "Sim/BendingThermo.h"
+
 namespace BendingSim
 {
 	namespace
@@ -40,6 +42,18 @@ namespace BendingSim
 				TechElem::Air, TechSlot::Secondary, 6, 6, 10, 3.0, 3.0, true },
 			{ TechId::AirJump, "Air Jump", "Launch yourself upward on a column of air.",
 				TechElem::Air, TechSlot::Utility, 4, 2, 12, 4.0, 6.0, false },
+			{ TechId::FireJet, "Jet Dash", "Fire jets from your feet launch you forward.",
+				TechElem::Fire, TechSlot::Special, 4, 8, 12, 5.0, 8.0, false },
+			{ TechId::AirScooter, "Air Scooter", "Hold: ride a spinning ball of air at high speed.",
+				TechElem::Air, TechSlot::Special, 6, 6, 8, 2.0, 2.0, true },
+			{ TechId::IceDaggers, "Ice Daggers", "Freeze water from the whip into five daggers of ice and throw them.",
+				TechElem::Water, TechSlot::Signature, 10, 4, 16, 4.0, 4.0, false },
+			{ TechId::Earthquake, "Earthquake", "Stomp: a shockwave through the ground throws everything around you outward.",
+				TechElem::Earth, TechSlot::Signature, 14, 4, 20, 8.0, 10.0, false },
+			{ TechId::FireRing, "Ring of Fire", "Spin kick: a ring of flame bursts out in every direction.",
+				TechElem::Fire, TechSlot::Signature, 10, 4, 18, 6.0, 8.0, false },
+			{ TechId::Tornado, "Tornado", "Spin up a tornado at the aim: it pulls things in and lifts them. Feed it fire for a fire tornado.",
+				TechElem::Air, TechSlot::Signature, 14, 6, 20, 8.0, 8.0, false },
 		};
 		static_assert(sizeof(GTechniques) / sizeof(GTechniques[0]) == static_cast<int>(ETechnique::Count), "One entry per technique");
 
@@ -110,6 +124,22 @@ namespace BendingSim
 		Spray.bDeriveRadiusFromMass = false;
 		Spray.RadiusCm = KMax(RadiusCm, Spray.RadiusCm);
 		return Spray;
+	}
+
+	FVolume MakeIceShard(double MassKg, const FVec3& LocationCm, const FVec3& VelocityCmS)
+	{
+		FVolume Shard = FVolume::MakeDefault(ESubstance::Ice, MassKg);
+		Shard.TemperatureK = 263.15;
+		Shard.LocationCm = LocationCm;
+		Shard.VelocityCmS = VelocityCmS;
+		return Shard;
+	}
+
+	double HeatToMakeIce(double MassKg, double TemperatureK, double IceTemperatureK)
+	{
+		using namespace Thermo::Constants;
+		return MassKg * (SpecificHeatWater * KMax(TemperatureK - WaterFreezingPointK, 0.0) + LatentHeatFusion
+			+ SpecificHeatIce * KMax(WaterFreezingPointK - IceTemperatureK, 0.0));
 	}
 
 	FVolume MakeRock(double MassKg, double DensityKgM3, const FVec3& LocationCm, const FVec3& VelocityCmS)

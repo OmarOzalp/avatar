@@ -233,6 +233,7 @@ namespace BendingSandbox3D
 		LastNoChiMessageS = -10.0;
 
 		Player = FPlayer();
+		Tornado = FTornado();
 		Player.LocationCm = Layout.PlayerStartCm;
 		Player.LocationCm.Z = Terrain.GetHeightAt(Player.LocationCm.X, Player.LocationCm.Y);
 		Player.YawRad = Layout.PlayerStartYawDeg * Pi / 180.0;
@@ -508,6 +509,7 @@ namespace BendingSandbox3D
 		UpdateBraziers(Dt);
 		UpdateProjectiles(Dt);
 		UpdateBodies(Dt);
+		UpdateTornado(Dt);
 		UpdateWhip(Dt);
 
 		SyncVolumesIn();
@@ -637,7 +639,8 @@ namespace BendingSandbox3D
 			return false;
 		}
 		const FTechniqueInfo& Info = GetTechniqueInfo(Technique);
-		const bool bNeedsWhip = Technique == ETechnique::WaterFreeze || Technique == ETechnique::WaterRelease || Technique == ETechnique::WaterBlast;
+		const bool bNeedsWhip = Technique == ETechnique::WaterFreeze || Technique == ETechnique::WaterRelease || Technique == ETechnique::WaterBlast
+			|| Technique == ETechnique::IceDaggers;
 		if (bNeedsWhip && !Whip.IsActive())
 		{
 			AddMessage("No water whip: draw one first (left mouse near a pond)");
@@ -763,6 +766,11 @@ namespace BendingSandbox3D
 			Player.HoldTechnique = Technique;
 			Player.HoldSlot = Info.Slot;
 			Player.HoldEmitTimerS = 0.0;
+			if (Technique == ETechnique::AirScooter)
+			{
+				Player.bScooter = true;
+				AddMessage("Air scooter: hold to ride");
+			}
 			if (Technique == ETechnique::GroundFlame)
 			{
 				const FVec3 Spot = ClampToRange(Player.AimPointCm, Tuning.EarthbendRangeCm);
@@ -905,8 +913,264 @@ namespace BendingSandbox3D
 			break;
 		}
 
+		case ETechnique::IceDaggers:
+		{
+			if (Whip.IsAnyFrozen(World))
+			{
+				AddMessage("Thaw the whip first (right mouse)");
+				break;
+			}
+			// Water bent off the end of the whip, frozen into daggers: the cold is billed like any freezing.
+			double WaterTemperatureK = 288.15;
+			const double Taken = Whip.TakeWater(World, Tuning.IceDaggerCount * Tuning.IceDaggerMassKg, WaterTemperatureK);
+			if (Taken < 0.5 * Tuning.IceDaggerMassKg)
+			{
+				AddMessage("Too little water left in the whip");
+				break;
+			}
+			const double Need = HeatToMakeIce(Taken, WaterTemperatureK, 263.15);
+			const double Granted = SpendChiForEnergy(Need, true);
+			const int Count = KClamp(static_cast<int>(Tuning.IceDaggerCount * Granted / KMax(Need, 1.0) + 0.5), 1, Tuning.IceDaggerCount);
+			const double ShardKg = Taken / Count;
+			SpendChiForEnergy(KineticEnergyJ(Taken, Tuning.IceDaggerSpeedMs), false);
+			FVec3 Side = AimDirection.Cross(FVec3(0.0, 0.0, 1.0));
+			Side = Side.Size() > 0.1 ? Side.GetSafeNormal() : FVec3(0.0, 1.0, 0.0);
+			const FVec3 Lift = Side.Cross(AimDirection).GetSafeNormal();
+			const double Spread = Tuning.IceDaggerSpreadDeg * Pi / 180.0;
+			const double Offsets[5][2] = { { 0.0, 0.0 }, { 1.0, 0.25 }, { -1.0, 0.25 }, { 0.5, -0.7 }, { -0.5, -0.7 } };
+			for (int Index = 0; Index < Count; ++Index)
+			{
+				const double* Offset = Offsets[Index % 5];
+				const FVec3 Direction = (AimDirection + Side * (Offset[0] * Spread) + Lift * (Offset[1] * Spread)).GetSafeNormal();
+				const FVec3 Location = Origin + Direction * 25.0 + Side * (Offset[0] * 12.0) + Lift * (Offset[1] * 12.0);
+				SpawnProjectile(EProjectileKind::IceShard, MakeIceShard(ShardKg, Location, Direction * MToCm(Tuning.IceDaggerSpeedMs)));
+			}
+			char Text[96];
+			int Length = Append(Text, 0, sizeof(Text), "Ice daggers: ");
+			Length = AppendNumber(Text, Length, sizeof(Text), Count, 0);
+			Length = Append(Text, Length, sizeof(Text), " shards, ");
+			Length = AppendNumber(Text, Length, sizeof(Text), Granted / 1000.0, 0);
+			Append(Text, Length, sizeof(Text), " kJ of cold");
+			AddMessage(Text);
+			break;
+		}
+
+		case ETechnique::Earthquake:
+		{
+			// A stomp: the ground shakes outward. Each body within reach gets kinetic energy that falls off with
+			// distance; equal energy moves a heavy body less (dv = sqrt(2 E / m)).
+			const FVec3 Center = Player.LocationCm;
+			const double Radius = KMax(Tuning.EarthquakeRadiusCm, 1.0);
+			double Requested = Tuning.EarthquakeGroundJ;
+			double Shares[MaxBodies] = {};
+			for (int Index = 0; Index < NumBodies; ++Index)
+			{
+				const FBody& Body = Bodies[Index];
+				const bool bMovable = Body.bAlive && !Body.bStatic && !Body.bHeld && !(Body.Prop == EArenaProp::Brazier && Body.Kind == EBodyKind::Prop);
+				const double Distance = Flat(Body.LocationCm - Center).Size();
+				if (bMovable && Distance < Radius)
+				{
+					const double Falloff = 1.0 - Distance / Radius;
+					Shares[Index] = Tuning.EarthquakeEnergyJ * Falloff * Falloff;
+					Requested += Shares[Index];
+				}
+			}
+			const double Scale = SpendChiForEnergy(Requested, false) / KMax(Requested, 1.0);
+			int Thrown = 0;
+			for (int Index = 0; Index < NumBodies; ++Index)
+			{
+				if (Shares[Index] <= 0.0)
+				{
+					continue;
+				}
+				const FBody& Body = Bodies[Index];
+				FVec3 Out = Flat(Body.LocationCm - Center);
+				Out = Out.Size() > 1.0 ? Out.GetSafeNormal() : GetFacing();
+				const double SpeedCmS = KMin(MToCm(KSqrt(2.0 * Shares[Index] * Scale / KMax(Body.MassKg, 0.1))), MToCm(Tuning.EarthquakeMaxSpeedMs));
+				PushBody(Index, (Out * 0.75 + FVec3(0.0, 0.0, 0.66)).GetSafeNormal() * (SpeedCmS * Body.MassKg));
+				++Thrown;
+			}
+			AddEffect(ESandboxEffect::Quake, Center, Requested * Scale);
+			char Text[96];
+			int Length = Append(Text, 0, sizeof(Text), "Earthquake: ");
+			Length = AppendNumber(Text, Length, sizeof(Text), Thrown, 0);
+			Append(Text, Length, sizeof(Text), Thrown == 1 ? " thing thrown" : " things thrown");
+			AddMessage(Text);
+			break;
+		}
+
+		case ETechnique::FireRing:
+		{
+			// A spin kick throws flame out in every direction.
+			const int Count = KMax(Tuning.FireRingCount, 1);
+			const double HeatEach = Tuning.FireRingMassKg * FlameSpecificHeat * (Tuning.FireRingTemperatureK - Ambient);
+			const double Granted = SpendChiForEnergy(HeatEach * Count, true);
+			const double MassKg = Tuning.FireRingMassKg * Granted / KMax(HeatEach * Count, 1.0);
+			if (MassKg < 0.02)
+			{
+				break;
+			}
+			SpendChiForEnergy(Count * KineticEnergyJ(MassKg, Tuning.FireRingSpeedMs), false);
+			for (int Index = 0; Index < Count; ++Index)
+			{
+				const double Angle = (2.0 * Pi * Index) / Count;
+				const FVec3 Out(KCos(Angle), KSin(Angle), 0.03);
+				FVolume Flame = MakeFlame(MassKg, Tuning.FireRingTemperatureK, Player.LocationCm + FVec3(0.0, 0.0, 75.0) + Out * 60.0, Out * MToCm(Tuning.FireRingSpeedMs));
+				SpawnProjectile(EProjectileKind::Fire, Flame);
+			}
+			AddEffect(ESandboxEffect::FireRing, Player.LocationCm + FVec3(0.0, 0.0, 75.0), Granted);
+			break;
+		}
+
+		case ETechnique::FireJet:
+		{
+			// Fire jets from the feet: the bender's own kinetic energy is the work.
+			FVec3 Direction = Flat(AimDirection);
+			Direction = Direction.Size() > 0.1 ? Direction.GetSafeNormal() : GetFacing();
+			const double Requested = KineticEnergyJ(PlayerMassKg, Tuning.FireJetSpeedMs);
+			const double Granted = SpendChiForEnergy(Requested, false);
+			const double SpeedMs = Tuning.FireJetSpeedMs * KSqrt(Granted / KMax(Requested, 1.0));
+			Player.DashTimeS = Tuning.FireJetSeconds;
+			Player.DashEmitTimerS = 0.0;
+			Player.DashVelocityCmS = Direction * MToCm(SpeedMs);
+			Player.VelocityCmS.Z = KMax(Player.VelocityCmS.Z, MToCm(Tuning.FireJetLiftMs));
+			Player.bGrounded = false;
+			AddEffect(ESandboxEffect::FireJet, Player.LocationCm, Granted);
+			break;
+		}
+
+		case ETechnique::Tornado:
+		{
+			FVec3 Spot = ClampToRange(Player.AimPointCm, Tuning.TornadoRangeCm);
+			Spot.Z = Terrain.GetHeightAt(Spot.X, Spot.Y);
+			const double Granted = SpendChiForEnergy(Tuning.TornadoEnergyJ, false);
+			if (Granted < 0.5 * Tuning.TornadoEnergyJ)
+			{
+				AddMessage("Not enough chi to spin up a tornado");
+				break;
+			}
+			Tornado = FTornado();
+			Tornado.bActive = true;
+			Tornado.CenterCm = Spot;
+			Tornado.LifetimeS = Tuning.TornadoSeconds * Granted / Tuning.TornadoEnergyJ;
+			AddMessage("Tornado!");
+			break;
+		}
+
 		default:
 			break;
+		}
+	}
+
+	void FSandbox::AddEffect(ESandboxEffect Effect, const FVec3& LocationCm, double EnergyJ)
+	{
+		if (NumFrameEvents < MaxFrameEvents)
+		{
+			FSandboxEvent& Event = FrameEvents[NumFrameEvents++];
+			Event = FSandboxEvent();
+			Event.Effect = Effect;
+			Event.LocationCm = LocationCm;
+			Event.EnergyJ = EnergyJ;
+			Event.bDiscrete = true;
+		}
+	}
+
+	void FSandbox::PushBody(int Index, const FVec3& ImpulseKgCmS)
+	{
+		if (Index >= 0 && Index < NumBodies && Bodies[Index].bAlive)
+		{
+			World.AddImpulse(Bodies[Index].Volume, ImpulseKgCmS);
+		}
+	}
+
+	void FSandbox::UpdateTornado(double Dt)
+	{
+		if (!Tornado.bActive)
+		{
+			return;
+		}
+		Tornado.AgeS += Dt;
+		if (Tornado.AgeS >= Tornado.LifetimeS)
+		{
+			Tornado.bActive = false;
+			AddEffect(ESandboxEffect::TornadoEnd, Tornado.CenterCm, 0.0);
+			return;
+		}
+		// Strength builds up, then dies away.
+		const double Strength = KSmoothStep(0.0, 0.4, Tornado.AgeS) * (1.0 - KSmoothStep(Tornado.LifetimeS - 0.6, Tornado.LifetimeS, Tornado.AgeS));
+		const double Reach = Tuning.TornadoRadiusCm * 1.8;
+		const FVec3 Up(0.0, 0.0, 1.0);
+		const double Swirl = MToCm(Tuning.TornadoSwirlMs);
+
+		// What it catches swirls round, is drawn in, and (if light enough) is lifted.
+		for (int Index = 0; Index < NumBodies; ++Index)
+		{
+			const FBody& Body = Bodies[Index];
+			if (!Body.bAlive || Body.bStatic || Body.bHeld || (Body.Prop == EArenaProp::Brazier && Body.Kind == EBodyKind::Prop))
+			{
+				continue;
+			}
+			const FVec3 Offset = Flat(Body.LocationCm - Tornado.CenterCm);
+			const double Distance = Offset.Size();
+			const double Height = Body.LocationCm.Z - Tornado.CenterCm.Z;
+			if (Distance >= Reach || Height > 900.0)
+			{
+				continue;
+			}
+			const double Falloff = (1.0 - Distance / Reach) * Strength;
+			const FVec3 Inward = Distance > 1.0 ? Offset * (-1.0 / Distance) : FVec3();
+			const FVec3 Around(-Inward.Y, Inward.X, 0.0);
+			const double AroundSpeed = Body.VelocityCmS.Dot(Around);
+			FVec3 DeltaV = Around * ((Swirl * Falloff - AroundSpeed) * KMin(1.0, 4.0 * Dt));
+			DeltaV += Inward * (MToCm(Tuning.TornadoPullMs2) * Falloff * Dt);
+			if (Height < 600.0)
+			{
+				DeltaV += Up * (MToCm(Tuning.TornadoLiftMs2) * Falloff * KMin(1.0, 150.0 / KMax(Body.MassKg, 1.0)) * Dt);
+			}
+			PushBody(Index, DeltaV * Body.MassKg);
+		}
+
+		// Flames, water and spray nearby are drawn into the spiral; flame caught in it makes a fire tornado.
+		Tornado.FireKg = 0.0;
+		for (FProjectile& Projectile : Projectiles)
+		{
+			if (!Projectile.bAlive || Projectile.Kind == EProjectileKind::GroundFlame)
+			{
+				continue;
+			}
+			const FVec3 Offset = Flat(Projectile.LocationCm - Tornado.CenterCm);
+			const double Distance = Offset.Size();
+			const double Height = Projectile.LocationCm.Z - Tornado.CenterCm.Z;
+			if (Distance >= Reach * 1.2 || Height > 1000.0)
+			{
+				continue;
+			}
+			if (Projectile.Kind == EProjectileKind::Fire)
+			{
+				Projectile.bLanded = false;
+				if (const FVolume* Volume = World.GetVolume(Projectile.Volume))
+				{
+					Tornado.FireKg += Volume->MassKg;
+				}
+				Projectile.AgeS = KMin(Projectile.AgeS, 0.5 * Tuning.ProjectileLifetimeS);
+			}
+			const FVec3 Inward = Distance > 1.0 ? Offset * (-1.0 / Distance) : FVec3();
+			const FVec3 Around(-Inward.Y, Inward.X, 0.0);
+			const double Ring = Tuning.TornadoRadiusCm * (0.5 + 0.5 * KClamp(Height / 800.0, 0.0, 1.0));
+			const FVec3 Wanted = Around * (Swirl * Strength) + Inward * ((Distance - Ring) * 3.0) + Up * (180.0 * Strength);
+			Projectile.VelocityCmS += (Wanted - Projectile.VelocityCmS) * KMin(1.0, 3.0 * Dt);
+		}
+
+		// Its air: parcels shed around the funnel (they push, and feed any fire they meet).
+		Tornado.EmitTimerS -= Dt;
+		if (Tornado.EmitTimerS <= 0.0 && CountProjectiles(EProjectileKind::Air) < 24)
+		{
+			Tornado.EmitTimerS = 0.12;
+			Tornado.EmitAngleRad += 2.1;
+			const FVec3 Out(KCos(Tornado.EmitAngleRad), KSin(Tornado.EmitAngleRad), 0.0);
+			const FVec3 Around(-Out.Y, Out.X, 0.0);
+			SpawnProjectile(EProjectileKind::Air, MakeBentAir(45.0, 1.4, World.Settings.AmbientAirDensityKgM3,
+				Tornado.CenterCm + Out * Tuning.TornadoRadiusCm + FVec3(0.0, 0.0, 80.0), Around * (Swirl * Strength) + Up * 150.0));
 		}
 	}
 
@@ -933,6 +1197,10 @@ namespace BendingSandbox3D
 				Length = AppendNumber(Text, Length, sizeof(Text), EarthWorkJ / 1000.0, 1);
 				Append(Text, Length, sizeof(Text), " kJ");
 				AddMessage(Text);
+			}
+			if (Technique == ETechnique::AirScooter)
+			{
+				Player.bScooter = false;
 			}
 			Player.HoldTechnique = ETechnique::None;
 			HoldProjectile = -1;
@@ -967,6 +1235,21 @@ namespace BendingSandbox3D
 			if (SpendChiForEnergy(Work, false) < 0.5 * Work)
 			{
 				Player.HoldTechnique = ETechnique::None;
+			}
+			break;
+		}
+
+		case ETechnique::AirScooter:
+		{
+			// Keeping the ball spinning: the drag work at speed, scaled up (a spinning ball, not a sail), plus a little to hover.
+			const double SpeedMs = CmToM(Flat(Player.VelocityCmS).Size());
+			const double DragW = 0.5 * World.Settings.AmbientAirDensityKgM3 * 0.8 * 0.6 * SpeedMs * SpeedMs * SpeedMs;
+			const double Requested = (DragW * Tuning.AirScooterUpkeepScale + 2500.0) * Dt;
+			if (SpendChiForEnergy(Requested, false) < 0.5 * Requested)
+			{
+				Player.bScooter = false;
+				Player.HoldTechnique = ETechnique::None;
+				AddMessage("Out of chi: the air scooter breaks up");
 			}
 			break;
 		}
@@ -1050,14 +1333,44 @@ namespace BendingSandbox3D
 			Wish = Wish.GetSafeNormal();
 		}
 
-		const bool bCasting = Player.Phase == EPhase::Startup || Player.Phase == EPhase::Active || Player.HoldTechnique != ETechnique::None;
+		const bool bCasting = Player.Phase == EPhase::Startup || Player.Phase == EPhase::Active
+			|| (Player.HoldTechnique != ETechnique::None && Player.HoldTechnique != ETechnique::AirScooter);
 		double MaxSpeed = Input.bSprint ? SprintSpeedCmS : WalkSpeedCmS;
 		MaxSpeed *= bCasting ? CastingSpeedScale : 1.0;
 		Player.Traction = Player.bGrounded ? World.GetSurfaceTractionMultiplierAt(Player.LocationCm) : 1.0;
+		if (Player.bScooter)
+		{
+			// Riding air: fast, glides, and mud does not grip it.
+			MaxSpeed = MToCm(Tuning.AirScooterSpeedMs);
+			Player.Traction = 1.0;
+		}
 
 		FVec3 Horizontal = Flat(Player.VelocityCmS);
 		const FVec3 Target = Wish * MaxSpeed;
-		if (Player.bGrounded)
+		if (Player.DashTimeS > 0.0)
+		{
+			// Fire jets hold the dash velocity, trailing flame from the feet.
+			Player.DashTimeS -= Dt;
+			Horizontal = Player.DashVelocityCmS;
+			Player.DashEmitTimerS -= Dt;
+			if (Player.DashEmitTimerS <= 0.0)
+			{
+				Player.DashEmitTimerS = 0.05;
+				const FVec3 Back = Player.DashVelocityCmS.GetSafeNormal() * -1.0;
+				const double Heat = Tuning.FireJetFlameMassKg * FlameSpecificHeat * (1300.0 - World.Settings.AmbientTemperatureK);
+				const double Granted = SpendChiForEnergy(Heat, true);
+				if (Granted > 0.25 * Heat)
+				{
+					SpawnProjectile(EProjectileKind::Fire, MakeFlame(Tuning.FireJetFlameMassKg * Granted / Heat, 1300.0,
+						Player.LocationCm + Back * 30.0 + FVec3(0.0, 0.0, 25.0), Back * 500.0 + FVec3(0.0, 0.0, -250.0)));
+				}
+			}
+		}
+		else if (Player.bScooter)
+		{
+			Horizontal = MoveToward(Horizontal, Wish.Size() > 0.01 ? Target : Horizontal * 0.985, MaxAccelerationCmS2 * 1.6 * Dt);
+		}
+		else if (Player.bGrounded)
 		{
 			if (Wish.Size() > 0.01)
 			{
@@ -1473,6 +1786,40 @@ namespace BendingSandbox3D
 				}
 				if (Projectile.AgeS > Tuning.AirLifetimeS)
 				{
+					RemoveProjectile(Index);
+				}
+				break;
+			}
+
+			case EProjectileKind::IceShard:
+			{
+				// A bender carries the daggers: they drop only slowly.
+				Projectile.VelocityCmS.Z -= 0.3 * GravityCmS2 * Dt;
+				Projectile.LocationCm += Projectile.VelocityCmS * Dt;
+				bool bHit = false;
+				for (int BodyIndex = 0; BodyIndex < NumBodies && !bHit; ++BodyIndex)
+				{
+					const FBody& Body = Bodies[BodyIndex];
+					if (!Body.bAlive || Body.bHeld)
+					{
+						continue;
+					}
+					FVec3 To = Projectile.LocationCm - Body.LocationCm;
+					if (Body.HalfHeightCm > 0.0)
+					{
+						To.Z -= KClamp(To.Z, -Body.HalfHeightCm, Body.HalfHeightCm);
+					}
+					if (To.Size() < Body.RadiusCm + Radius)
+					{
+						// It strikes and shatters: its momentum goes into what it hit.
+						PushBody(BodyIndex, Projectile.VelocityCmS * MassKg);
+						bHit = true;
+					}
+				}
+				const double GroundHere = Terrain.GetHeightAt(Projectile.LocationCm.X, Projectile.LocationCm.Y);
+				if (bHit || Projectile.LocationCm.Z - Radius <= GroundHere || Projectile.AgeS > 3.0)
+				{
+					AddEffect(ESandboxEffect::IceShatter, Projectile.LocationCm, KineticEnergyJ(MassKg, CmToM(Projectile.VelocityCmS.Size())));
 					RemoveProjectile(Index);
 				}
 				break;

@@ -11,6 +11,7 @@ namespace BendingTags
 	BENDING_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Bending_Heavy);
 	BENDING_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Bending_Special);
 	BENDING_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Bending_Utility);
+	BENDING_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Bending_Signature);
 
 	// Classification of every bending move ability.
 	BENDING_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Bending);

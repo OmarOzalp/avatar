@@ -358,6 +358,130 @@ namespace
 		ExpectTrue("lashing the flame puts it out", CountGroundFlames() == 0);
 	}
 
+	double BodySpeed(int Index) { return Index >= 0 ? GSandbox.Bodies[Index].VelocityCmS.Size() : 0.0; }
+	FVec3 Flat(const FVec3& V) { return FVec3(V.X, V.Y, 0.0); }
+
+	void IceDaggersStrike()
+	{
+		SimTest::Section("Ice Daggers");
+		GSandbox.Init();
+		const int Dummy = FindProp(EArenaProp::Dummy, 0);
+		const FVec3 DummyAt = GSandbox.Bodies[Dummy].LocationCm;
+		Teleport(700.0, 450.0, 90.0);
+		SetStance(ETechniqueElement::Water);
+		Press(ETechniqueSlot::Primary, Ground(700.0, -400.0), 1.2);
+		Teleport(DummyAt.X - 700.0, DummyAt.Y, 0.0);
+		Run(LookAt(DummyAt), 0.6);
+		const double WhipBefore = GSandbox.Whip.GetMassKg(GSandbox.World);
+		const double ColdBefore = GSandbox.ThermalWorkJ;
+		FInput Input = LookAt(DummyAt);
+		Input.bSlotHeld[static_cast<int>(ETechniqueSlot::Signature)] = true;
+		GSandbox.Advance(Input, Dt);
+		Input.bSlotHeld[static_cast<int>(ETechniqueSlot::Signature)] = false;
+		int Shards = 0;
+		for (int Frame = 0; Frame < 20 && Shards == 0; ++Frame)
+		{
+			GSandbox.Advance(Input, Dt);
+			Shards = GSandbox.CountProjectiles(EProjectileKind::IceShard);
+		}
+		const double Taken = WhipBefore - GSandbox.Whip.GetMassKg(GSandbox.World);
+		const double Cold = GSandbox.ThermalWorkJ - ColdBefore;
+		std::printf("    %d daggers from %.2f kg of the whip's water; %.0f kJ of cold\n", Shards, Taken, Cold / 1000.0);
+		ExpectTrue("five daggers fly", Shards == 5);
+		ExpectNear("their water came out of the whip (kg)", Taken, 2.5, 0.01);
+		// The whip's water sits near 15 C (it trades heat with the air), hence 1%.
+		ExpectNear("freezing them cost m (c dT + L_f + c_ice dT) (kJ)", Cold / 1000.0, HeatToMakeIce(Taken, 288.15, 263.15) / 1000.0, 10.0);
+		double Peak = 0.0;
+		for (int Frame = 0; Frame < 40; ++Frame)
+		{
+			GSandbox.Advance(Input, Dt);
+			Peak = KMax(Peak, BodySpeed(Dummy) + 30.0 * (std::fabs(GSandbox.Bodies[Dummy].TiltRate[0]) + std::fabs(GSandbox.Bodies[Dummy].TiltRate[1])));
+		}
+		ExpectTrue("they strike the dummy", Peak > 20.0);
+		ExpectTrue("and shatter", GSandbox.CountProjectiles(EProjectileKind::IceShard) == 0);
+	}
+
+	void EarthquakeThrowsByMass()
+	{
+		SimTest::Section("Earthquake");
+		GSandbox.Init();
+		Teleport(580.0, -330.0, 0.0);
+		SetStance(ETechniqueElement::Earth);
+		const int Stone = FindProp(EArenaProp::Stone, 0);
+		const int FarDummy = FindProp(EArenaProp::Dummy, 4);
+		Press(ETechniqueSlot::Signature, Ground(1500.0, -330.0), 0.0);
+		double StoneUp = 0.0, StoneSpeed = 0.0;
+		for (int Frame = 0; Frame < 30; ++Frame)
+		{
+			GSandbox.Advance(LookAt(Ground(1500.0, -330.0)), Dt);
+			StoneUp = KMax(StoneUp, GSandbox.Bodies[Stone].VelocityCmS.Z);
+			StoneSpeed = KMax(StoneSpeed, BodySpeed(Stone));
+		}
+		std::printf("    stones thrown at up to %.1f m/s; a dummy 25 m away: %.2f m/s\n", StoneSpeed / 100.0, BodySpeed(FarDummy) / 100.0);
+		ExpectTrue("the stomp throws nearby stones up and out (> 4 m/s)", StoneUp > 200.0 && StoneSpeed > 400.0);
+		ExpectTrue("nothing outside its reach moves", BodySpeed(FarDummy) < 1.0);
+		ExpectTrue("it says so", HasMessage("Earthquake"));
+	}
+
+	void FireRingAndJetDash()
+	{
+		SimTest::Section("Ring of Fire and Jet Dash");
+		GSandbox.Init();
+		Teleport(-600.0, -300.0, 0.0);
+		SetStance(ETechniqueElement::Fire);
+		Press(ETechniqueSlot::Signature, Ground(400.0, -300.0), 0.25);
+		const int Flames = GSandbox.CountProjectiles(EProjectileKind::Fire);
+		ExpectTrue("sixteen flames burst out in a ring", Flames == 16);
+		Run(LookAt(Ground(400.0, -300.0)), 1.0);
+		const FVec3 Start = GSandbox.Player.LocationCm;
+		const int FlamesBefore = GSandbox.CountProjectiles(EProjectileKind::Fire);
+		Press(ETechniqueSlot::Special, Ground(2000.0, -300.0), 0.5);
+		const double Moved = Flat(GSandbox.Player.LocationCm - Start).Size();
+		std::printf("    ring: %d flames; jet dash carried the bender %.1f m in 0.5 s\n", Flames, Moved / 100.0);
+		ExpectTrue("the jets carry the bender forward (> 3.5 m in 0.5 s)", Moved > 350.0);
+		ExpectTrue("leaving a trail of flame", GSandbox.CountProjectiles(EProjectileKind::Fire) > FlamesBefore);
+	}
+
+	void AirScooterAndTornado()
+	{
+		SimTest::Section("Air Scooter and Tornado");
+		GSandbox.Init();
+		Teleport(-600.0, -300.0, 0.0);
+		SetStance(ETechniqueElement::Air);
+		FInput Ride = LookAt(GSandbox.Player.LocationCm + FVec3(3000.0, 0.0, 0.0));
+		Ride.bSlotHeld[static_cast<int>(ETechniqueSlot::Special)] = true;
+		Ride.MoveForward = 1.0;
+		Run(Ride, 1.6);
+		const double RideSpeed = Flat(GSandbox.Player.VelocityCmS).Size();
+		Ride.bSlotHeld[static_cast<int>(ETechniqueSlot::Special)] = false;
+		Run(Ride, 1.0);
+		const double AfterSpeed = Flat(GSandbox.Player.VelocityCmS).Size();
+		std::printf("    air scooter: %.1f m/s (running: %.1f m/s after letting go)\n", RideSpeed / 100.0, AfterSpeed / 100.0);
+		ExpectTrue("riding the air scooter is fast (> 12 m/s)", RideSpeed > 1200.0);
+		ExpectTrue("letting go returns to running speed", AfterSpeed < 600.0);
+
+		// A tornado over the stones lifts them; a fire blast thrown into it makes a fire tornado.
+		GSandbox.Init();
+		Teleport(-300.0, -500.0, 0.0);
+		SetStance(ETechniqueElement::Air);
+		const int Stone = FindProp(EArenaProp::Stone, 0);
+		const double StoneStartZ = GSandbox.Bodies[Stone].LocationCm.Z;
+		Press(ETechniqueSlot::Signature, Ground(570.0, -500.0), 0.0);
+		double Highest = StoneStartZ;
+		for (int Frame = 0; Frame < 120; ++Frame)
+		{
+			GSandbox.Advance(LookAt(Ground(570.0, -500.0)), Dt);
+			Highest = KMax(Highest, GSandbox.Bodies[Stone].LocationCm.Z);
+		}
+		ExpectTrue("a tornado spins up", GSandbox.Tornado.bActive);
+		SetStance(ETechniqueElement::Fire);
+		Press(ETechniqueSlot::Primary, GSandbox.Tornado.CenterCm + FVec3(0.0, 0.0, 120.0), 0.6);
+		const double FireKg = GSandbox.Tornado.FireKg;
+		std::printf("    tornado lifted a stone %.1f m; %.2f kg of flame caught in it\n", (Highest - StoneStartZ) / 100.0, FireKg);
+		ExpectTrue("it lifts the stones (> 1 m)", Highest - StoneStartZ > 100.0);
+		ExpectTrue("fire thrown in makes a fire tornado", FireKg > 0.05);
+	}
+
 	void FreezeCostsLatentHeat()
 	{
 		SimTest::Section("Freeze the whip");
@@ -525,6 +649,10 @@ int main(int ArgCount, char** Args)
 	WhipFromThePond();
 	WhipPutsOutABrazierFireRelightsIt();
 	WaterPutsOutFire();
+	IceDaggersStrike();
+	EarthquakeThrowsByMass();
+	FireRingAndJetDash();
+	AirScooterAndTornado();
 	FreezeCostsLatentHeat();
 	WaterBlastMakesMud();
 	AirThrowsDummiesNotBoulders();

@@ -29,6 +29,8 @@ namespace
 		{
 		case EBendingProjectileKind::Fire: return 0.6;
 		case EBendingProjectileKind::Air:  return 0.3;
+		// Drawn larger than its few centimetres of ice so it reads at range.
+		case EBendingProjectileKind::IceShard: return 1.6;
 		default:                           return 1.0;
 		}
 	}
@@ -106,6 +108,7 @@ void ABendingProjectile::InitProjectile(EBendingProjectileKind InKind, const Ben
 	case EBendingProjectileKind::Fire:  LifetimeSeconds = Tuning.ProjectileLifetimeS; break;
 	case EBendingProjectileKind::Air:   LifetimeSeconds = FMath::Min(Tuning.ProjectileLifetimeS, Tuning.AirLifetimeS); break;
 	case EBendingProjectileKind::Water: LifetimeSeconds = WaterLifetimeS; break;
+	case EBendingProjectileKind::IceShard: LifetimeSeconds = IceShardLifetimeS; break;
 	}
 
 	UWorld* World = GetWorld();
@@ -113,12 +116,13 @@ void ABendingProjectile::InitProjectile(EBendingProjectileKind InKind, const Ben
 	Arena = ABendingSandboxArena::Find(World);
 
 	Mesh->SetStaticMesh(UBendingSandboxLibrary::LoadBasicShape(TEXT("Sphere")));
-	Mesh->SetCastShadow(Kind == EBendingProjectileKind::Water);
+	Mesh->SetCastShadow(Kind == EBendingProjectileKind::Water || Kind == EBendingProjectileKind::IceShard);
 	switch (Kind)
 	{
 	case EBendingProjectileKind::Fire:  Material = UBendingSandboxLibrary::SetMeshColor(Mesh, GetFlameColor(SimVolume.TemperatureK)); break;
 	case EBendingProjectileKind::Air:   Material = UBendingSandboxLibrary::SetMeshColor(Mesh, UBendingSandboxLibrary::FromSRGB(225, 240, 255)); break;
 	case EBendingProjectileKind::Water: Material = UBendingSandboxLibrary::SetMeshColor(Mesh, UBendingSandboxLibrary::FromSRGB(45, 115, 225)); break;
+	case EBendingProjectileKind::IceShard: Material = UBendingSandboxLibrary::SetMeshColor(Mesh, UBendingSandboxLibrary::FromSRGB(200, 240, 255)); break;
 	}
 
 	if (bWithFlameLight)
@@ -183,6 +187,20 @@ void ABendingProjectile::MakeSpray(double DragTimeS)
 	Mesh->SetCastShadow(false);
 }
 
+void ABendingProjectile::SetVelocityCmS(const FVector& InVelocityCmS)
+{
+	if (!bGrounded)
+	{
+		VelocityCmS = InVelocityCmS;
+	}
+}
+
+double ABendingProjectile::GetMassKg() const
+{
+	FElementalVolumeState State;
+	return Volume->GetSimulatedState(State) ? State.MassKg : 0.0;
+}
+
 void ABendingProjectile::SetFuel(double InFuelJ, double PowerW)
 {
 	FuelJ = FMath::Max(InFuelJ, 0.0);
@@ -241,7 +259,17 @@ void ABendingProjectile::Tick(float DeltaSeconds)
 			const double DecayS = FMath::Max(BendingSim::GetDefaultTechniqueTuning().AirDecayTimeS, 0.05);
 			VelocityCmS *= BendingSim::KExp(-DeltaSeconds / DecayS);
 		}
+		else if (Kind == EBendingProjectileKind::IceShard)
+		{
+			// The bender carries the daggers: they drop only slowly.
+			VelocityCmS.Z += IceShardGravityScale * GetWorld()->GetGravityZ() * DeltaSeconds;
+		}
+		const FVector From = Location;
 		Location += VelocityCmS * DeltaSeconds;
+		if (Kind == EBendingProjectileKind::IceShard && StrikeAlongPath(From, Location, State))
+		{
+			return;
+		}
 		if (HandleGroundContact(Location, State))
 		{
 			return;
@@ -251,6 +279,33 @@ void ABendingProjectile::Tick(float DeltaSeconds)
 	SetActorLocation(Location);
 	Volume->SetManualVelocity(VelocityCmS);
 	UpdateVisuals(State);
+}
+
+bool ABendingProjectile::StrikeAlongPath(const FVector& From, const FVector& To, const FElementalVolumeState& State)
+{
+	FCollisionObjectQueryParams Objects;
+	Objects.AddObjectTypesToQuery(ECC_PhysicsBody);
+	Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+	// Braziers, ice blocks and the ground shatter it too.
+	Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+	Objects.AddObjectTypesToQuery(ECC_Pawn);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(BendingIceShard), false, this);
+	if (AActor* OwnerActor = GetOwner())
+	{
+		Params.AddIgnoredActor(OwnerActor);
+	}
+	FHitResult Hit;
+	if (!GetWorld()->SweepSingleByObjectType(Hit, From, To, FQuat::Identity, Objects, FCollisionShape::MakeSphere(static_cast<float>(State.RadiusCm)), Params))
+	{
+		return false;
+	}
+	// It strikes and shatters: its momentum goes into what it hit.
+	if (UPrimitiveComponent* Struck = Hit.GetComponent(); Struck && Struck->IsSimulatingPhysics())
+	{
+		Struck->AddImpulseAtLocation(VelocityCmS * State.MassKg, Hit.ImpactPoint);
+	}
+	Destroy();
+	return true;
 }
 
 bool ABendingProjectile::HandleGroundContact(FVector& Location, const FElementalVolumeState& State)
@@ -289,7 +344,8 @@ bool ABendingProjectile::HandleGroundContact(FVector& Location, const FElemental
 	}
 	PreviousLocation = Location;
 
-	const double ContactFraction = Kind == EBendingProjectileKind::Water ? 1.0 : (Kind == EBendingProjectileKind::Fire ? 0.4 : 0.5);
+	const double ContactFraction = (Kind == EBendingProjectileKind::Water || Kind == EBendingProjectileKind::IceShard) ? 1.0
+		: (Kind == EBendingProjectileKind::Fire ? 0.4 : 0.5);
 	if (!bHasFloor || Location.Z - ContactFraction * Radius > FloorZ)
 	{
 		return false;
@@ -316,6 +372,11 @@ bool ABendingProjectile::HandleGroundContact(FVector& Location, const FElemental
 		Location.Z = FloorZ + GroundedFlameLift * Radius;
 		return false;
 
+	case EBendingProjectileKind::IceShard:
+		// Shatters on the ground.
+		Destroy();
+		return true;
+
 	case EBendingProjectileKind::Air:
 	{
 		// Air meeting the ground flows along it.
@@ -334,6 +395,16 @@ bool ABendingProjectile::HandleGroundContact(FVector& Location, const FElemental
 void ABendingProjectile::UpdateVisuals(const FElementalVolumeState& State)
 {
 	const double VisualRadius = FMath::Max(State.RadiusCm * GetVisualRadiusFraction(Kind), 4.0);
+	if (Kind == EBendingProjectileKind::IceShard)
+	{
+		// A long crystal pointing where it flies.
+		Mesh->SetRelativeScale3D(FVector(4.0, 1.0, 1.0) * (VisualRadius / 50.0));
+		if (!VelocityCmS.IsNearlyZero())
+		{
+			SetActorRotation(VelocityCmS.Rotation());
+		}
+		return;
+	}
 	Mesh->SetRelativeScale3D(FVector(VisualRadius / 50.0));
 
 	if (Kind != EBendingProjectileKind::Fire)

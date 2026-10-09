@@ -306,6 +306,7 @@ void AAvatarCharacter::EnsureRuntimeInput()
 			{ BendingTags::Input_Bending_Heavy, EKeys::RightMouseButton },
 			{ BendingTags::Input_Bending_Special, EKeys::Q },
 			{ BendingTags::Input_Bending_Utility, EKeys::E },
+			{ BendingTags::Input_Bending_Signature, EKeys::F },
 		};
 		for (const FMoveKey& MoveKey : MoveKeys)
 		{

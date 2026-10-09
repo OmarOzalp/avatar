@@ -12,6 +12,7 @@ namespace BendingTechnique
 		case BendingSim::ETechniqueSlot::Secondary: return BendingTags::Input_Bending_Heavy;
 		case BendingSim::ETechniqueSlot::Special:   return BendingTags::Input_Bending_Special;
 		case BendingSim::ETechniqueSlot::Utility:   return BendingTags::Input_Bending_Utility;
+		case BendingSim::ETechniqueSlot::Signature: return BendingTags::Input_Bending_Signature;
 		default:                                    return FGameplayTag();
 		}
 	}
@@ -24,6 +25,7 @@ namespace BendingTechnique
 		case BendingSim::ETechniqueSlot::Secondary: return TEXT("RMB");
 		case BendingSim::ETechniqueSlot::Special:   return TEXT("Q");
 		case BendingSim::ETechniqueSlot::Utility:   return TEXT("E");
+		case BendingSim::ETechniqueSlot::Signature: return TEXT("F");
 		default:                                    return TEXT("");
 		}
 	}

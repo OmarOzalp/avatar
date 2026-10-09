@@ -12,7 +12,7 @@ class UBendingMoveDefinition;
 class UFont;
 
 /**
- * Canvas HUD for the bending sandbox (no UMG assets): crosshair, chi and stamina, the stance's four techniques,
+ * Canvas HUD for the bending sandbox (no UMG assets): crosshair, chi and stamina, the stance's five techniques,
  * the current move's Startup / Active / Recovery frames as they elapse, reactions between the elements as they
  * happen, what each technique did, ground traction on mud, and a controls panel (H).
  */

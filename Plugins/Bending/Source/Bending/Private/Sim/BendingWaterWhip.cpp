@@ -641,6 +641,27 @@ namespace BendingSim
 		return Count;
 	}
 
+	double FWaterWhip::TakeWater(FSimWorld& World, double MassKg, double& OutTemperatureK)
+	{
+		double Taken = 0.0;
+		double HeatWeighted = 0.0;
+		for (int Segment = GetNumSegments() - 1; Segment >= 0 && Taken < MassKg; --Segment)
+		{
+			FVolume* Volume = World.GetVolume(Segments[Segment]);
+			if (!Volume || World.IsDepleted(Segments[Segment]) || Volume->Substance != ESubstance::Water)
+			{
+				continue;
+			}
+			// Leave a film in every segment so the stream stays whole.
+			const double Take = KMin(MassKg - Taken, Volume->MassKg * 0.7);
+			Volume->MassKg -= Take;
+			Taken += Take;
+			HeatWeighted += Take * Volume->TemperatureK;
+		}
+		OutTemperatureK = Taken > 0.0 ? HeatWeighted / Taken : 288.15;
+		return Taken;
+	}
+
 	void FWaterWhip::SyncVolumes(FSimWorld& World)
 	{
 		for (int Segment = 0; Segment < GetNumSegments(); ++Segment)

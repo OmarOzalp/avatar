@@ -45,6 +45,10 @@ public:
 	void CrumbleIntoGround(BendingSim::FTerrain& Terrain);
 
 	bool IsHeld() const { return bHeld; }
+	/** A loose physics body (not held, not anchored like braziers and ice blocks): quakes and tornadoes can throw it. */
+	bool IsLoose() const;
+	/** Changes its velocity (cm/s) as a shove would, whatever its mass. */
+	void AddVelocity(const FVector& DeltaVCmS);
 	bool IsThrownRock() const { return bThrownRock; }
 	double GetMassKg() const;
 	double GetRadiusCm() const { return RadiusCm; }

@@ -254,6 +254,12 @@ double ABendingWaterWhipActor::TransferHeat(double HeatJ)
 	return SimWorld ? Whip.TransferHeat(*SimWorld, HeatJ) : 0.0;
 }
 
+double ABendingWaterWhipActor::TakeWater(double MassKg, double& OutTemperatureK)
+{
+	BendingSim::FSimWorld* SimWorld = GetSimWorld();
+	return SimWorld ? Whip.TakeWater(*SimWorld, MassKg, OutTemperatureK) : 0.0;
+}
+
 double ABendingWaterWhipActor::GetHeatToFreeze() const
 {
 	const BendingSim::FSimWorld* SimWorld = GetSimWorld();

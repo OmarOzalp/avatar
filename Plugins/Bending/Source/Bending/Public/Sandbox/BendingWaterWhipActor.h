@@ -39,6 +39,8 @@ public:
 
 	/** Heat into (+) or out of (-) the water, segment by segment from the hand outward. Returns the heat moved (J). */
 	double TransferHeat(double HeatJ);
+	/** Takes up to MassKg of liquid water off the stream, tip first (Ice Daggers); OutTemperatureK is its temperature. */
+	double TakeWater(double MassKg, double& OutTemperatureK);
 	double GetHeatToFreeze() const;
 	double GetHeatToMelt() const;
 	bool IsFrozen() const;

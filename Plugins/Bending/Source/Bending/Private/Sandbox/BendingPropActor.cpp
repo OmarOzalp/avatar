@@ -226,6 +226,19 @@ void ABendingPropActor::CrumbleIntoGround(BendingSim::FTerrain& Terrain)
 	Destroy();
 }
 
+bool ABendingPropActor::IsLoose() const
+{
+	return !bHeld && Body && Body->IsSimulatingPhysics();
+}
+
+void ABendingPropActor::AddVelocity(const FVector& DeltaVCmS)
+{
+	if (IsLoose())
+	{
+		Body->AddImpulse(DeltaVCmS, NAME_None, /*bVelChange*/ true);
+	}
+}
+
 double ABendingPropActor::GetMassKg() const
 {
 	FElementalVolumeState State;

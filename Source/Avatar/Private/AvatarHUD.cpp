@@ -270,7 +270,7 @@ void AAvatarHUD::DrawStance(const UBendingComponent* Bending)
 	const UFont* Small = GEngine->GetSmallFont();
 	const float X = 30.f * UIScale;
 	float Y = 26.f * UIScale;
-	DrawRect(PanelColor, X - 12.f * UIScale, Y - 10.f * UIScale, 760.f * UIScale, 196.f * UIScale);
+	DrawRect(PanelColor, X - 12.f * UIScale, Y - 10.f * UIScale, 760.f * UIScale, 234.f * UIScale);
 
 	// Stances on 1-4, the active one in its colour.
 	static constexpr EBendingElement Stances[] = { EBendingElement::Water, EBendingElement::Earth, EBendingElement::Fire, EBendingElement::Air };
@@ -284,7 +284,7 @@ void AAvatarHUD::DrawStance(const UBendingComponent* Bending)
 	}
 	Y += 36.f * UIScale;
 
-	// The stance's four techniques, the running one highlighted.
+	// The stance's five techniques, the running one highlighted.
 	const UBendingTechniqueMove* Running = Cast<UBendingTechniqueMove>(Bending->GetCurrentMove());
 	for (int32 SlotIndex = 0; SlotIndex < static_cast<int32>(BendingSim::ETechniqueSlot::Count); ++SlotIndex)
 	{
@@ -478,7 +478,7 @@ void AAvatarHUD::DrawControls()
 		{ TEXT("Space"), TEXT("jump") },
 		{ TEXT("Shift"), TEXT("sprint") },
 		{ TEXT("1 2 3 4"), TEXT("water / earth / fire / air stance") },
-		{ TEXT("LMB RMB Q E"), TEXT("the stance's techniques (top left)") },
+		{ TEXT("LMB RMB Q E F"), TEXT("the stance's techniques (top left)") },
 		{ TEXT("H"), TEXT("hide this panel") },
 	};
 	const int32 NumLines = static_cast<int32>(UE_ARRAY_COUNT(Lines));

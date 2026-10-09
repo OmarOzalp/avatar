@@ -7,6 +7,7 @@ namespace BendingTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Input_Bending_Heavy, "Input.Bending.Heavy", "Heavy / chargeable strike input.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Input_Bending_Special, "Input.Bending.Special", "Element special input.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Input_Bending_Utility, "Input.Bending.Utility", "Defensive / mobility input.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Input_Bending_Signature, "Input.Bending.Signature", "The stance's signature technique.");
 
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Bending, "Ability.Bending", "Every bending move ability.");
 

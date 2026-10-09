@@ -31,6 +31,8 @@ namespace BendingSim
 		Special,
 		/** E. */
 		Utility,
+		/** F: each element's signature move. */
+		Signature,
 
 		Count
 	};
@@ -52,6 +54,12 @@ namespace BendingSim
 		AirBlast,
 		AirGust,
 		AirJump,
+		FireJet,
+		AirScooter,
+		IceDaggers,
+		Earthquake,
+		FireRing,
+		Tornado,
 
 		Count
 	};
@@ -144,6 +152,41 @@ namespace BendingSim
 		double AirLifetimeS = 0.9;
 		double AirJumpSpeedMs = 8.5;
 
+		// ---------------------------------------------------------------- Signature and mobility moves
+		/** Ice Daggers: water taken from the whip and frozen into this many shards. */
+		int IceDaggerCount = 5;
+		double IceDaggerMassKg = 0.5;
+		double IceDaggerSpeedMs = 30.0;
+		double IceDaggerSpreadDeg = 5.0;
+		/** Earthquake: kinetic energy (J) the stomp gives a body at its feet (less farther out), the work of shaking
+		 *  the ground itself, the fastest it throws anything, and how far it reaches. */
+		double EarthquakeEnergyJ = 3000.0;
+		double EarthquakeGroundJ = 20000.0;
+		double EarthquakeMaxSpeedMs = 8.0;
+		double EarthquakeRadiusCm = 850.0;
+		/** Ring of Fire: flames thrown out in every direction. */
+		int FireRingCount = 16;
+		double FireRingMassKg = 0.2;
+		double FireRingSpeedMs = 9.0;
+		double FireRingTemperatureK = 1350.0;
+		/** Jet Dash: fire jets from the feet push the bender this fast for this long. */
+		double FireJetSpeedMs = 13.0;
+		double FireJetLiftMs = 3.5;
+		double FireJetSeconds = 0.35;
+		double FireJetFlameMassKg = 0.1;
+		/** Air Scooter: top speed on the ball of air; holding it costs the drag work times this (a spinning ball, not a sail). */
+		double AirScooterSpeedMs = 14.0;
+		double AirScooterUpkeepScale = 12.0;
+		/** Tornado: a vortex at the aim point. */
+		double TornadoRangeCm = 1400.0;
+		double TornadoRadiusCm = 280.0;
+		double TornadoSeconds = 4.0;
+		/** Swirl speed it gives what it catches (m/s), inward pull and lift (m/s^2, lift shared out by mass). */
+		double TornadoSwirlMs = 8.0;
+		double TornadoPullMs2 = 16.0;
+		double TornadoLiftMs2 = 24.0;
+		double TornadoEnergyJ = 45000.0;
+
 		// ---------------------------------------------------------------- Shared
 		/** Bent fire and air live at most this long (s). */
 		double ProjectileLifetimeS = 3.0;
@@ -160,6 +203,10 @@ namespace BendingSim
 	/** Compressed air: density = Compression * ambient, filling a sphere of RadiusCm. */
 	BENDINGSIM_API FVolume MakeBentAir(double RadiusCm, double Compression, double AmbientDensityKgM3, const FVec3& LocationCm, const FVec3& VelocityCmS);
 	BENDINGSIM_API FVolume MakeWaterBall(double MassKg, double TemperatureK, const FVec3& LocationCm, const FVec3& VelocityCmS);
+	/** An ice dagger: a shard of ice just below freezing. */
+	BENDINGSIM_API FVolume MakeIceShard(double MassKg, const FVec3& LocationCm, const FVec3& VelocityCmS);
+	/** Heat (J) to take out of MassKg of water at TemperatureK to make ice at IceTemperatureK. */
+	BENDINGSIM_API double HeatToMakeIce(double MassKg, double TemperatureK, double IceTemperatureK);
 	/** Spray: water spread into droplets over a cloud of RadiusCm, so it exchanges heat over far more surface than a ball. */
 	BENDINGSIM_API FVolume MakeWaterSpray(double MassKg, double TemperatureK, const FVec3& LocationCm, const FVec3& VelocityCmS, double RadiusCm);
 	/** A rock of compacted earth (porosity 0.25: it soaks a little, it can turn to mud). */

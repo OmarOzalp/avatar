@@ -135,6 +135,11 @@ namespace BendingSim
 		void PostStep(FSimWorld& World);
 		/** Water flung off at the snap since the last call (already taken out of the segments). The owner spawns it. */
 		int ConsumeSpray(FWhipDrop* OutDrops, int MaxDrops);
+		/**
+		 * Takes up to MassKg of liquid water out of the stream, tip first (the bender bends it off the end), and
+		 * returns the mass taken; OutTemperatureK is its mass-weighted temperature.
+		 */
+		double TakeWater(FSimWorld& World, double MassKg, double& OutTemperatureK);
 
 		/** Heat (J) to extract to freeze every liquid segment completely. */
 		double GetHeatToFreeze(const FSimWorld& World) const;

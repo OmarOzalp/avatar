@@ -84,7 +84,9 @@ namespace BendingSandbox3D
 		/** Flame resting on the ground, fed by a bender while held. */
 		GroundFlame,
 		/** Water flung off a whip's tip at the snap: a cloud of droplets that falls like water but slows quickly. */
-		Spray
+		Spray,
+		/** An ice dagger: flies nearly straight, strikes what it hits, shatters. */
+		IceShard
 	};
 
 	struct FProjectile
@@ -136,6 +138,36 @@ namespace BendingSandbox3D
 		/** Walk cycle phase (rad), for the renderer. */
 		double StridePhase = 0.0;
 		double Traction = 1.0;
+		/** Jet Dash: time left and the velocity the fire jets hold. */
+		double DashTimeS = 0.0;
+		double DashEmitTimerS = 0.0;
+		FVec3 DashVelocityCmS;
+		/** Riding an air scooter. */
+		bool bScooter = false;
+	};
+
+	/** A tornado spun up by an airbender. */
+	struct FTornado
+	{
+		FVec3 CenterCm;
+		double AgeS = 0.0;
+		double LifetimeS = 0.0;
+		double EmitTimerS = 0.0;
+		double EmitAngleRad = 0.0;
+		/** Flame caught in it (kg): a fire tornado. */
+		double FireKg = 0.0;
+		bool bActive = false;
+	};
+
+	/** Presentation-only events (a technique's moment), alongside the simulation's reactions. */
+	enum class ESandboxEffect : unsigned char
+	{
+		None,
+		IceShatter,
+		Quake,
+		FireRing,
+		FireJet,
+		TornadoEnd
 	};
 
 	/** Earthbending in progress (wall rising, rock lifting). */
@@ -161,6 +193,7 @@ namespace BendingSandbox3D
 	struct FSandboxEvent
 	{
 		EReactionType Type = EReactionType::None;
+		ESandboxEffect Effect = ESandboxEffect::None;
 		FVec3 LocationCm;
 		double MassKg = 0.0;
 		double EnergyJ = 0.0;
@@ -257,6 +290,13 @@ namespace BendingSandbox3D
 		bool bPreviousJump = false;
 		/** This move created the whip (its active frame does not lash yet). */
 		bool bWhipCreatedThisMove = false;
+	public:
+		FTornado Tornado;
+	private:
+		void UpdateTornado(double Dt);
+		void AddEffect(ESandboxEffect Effect, const FVec3& LocationCm, double EnergyJ);
+		/** Pushes a body as if struck: J (kg*cm/s) through its simulated volume, so every kind of body reacts its own way. */
+		void PushBody(int Index, const FVec3& ImpulseKgCmS);
 		/** Ground flame fed by the current hold. */
 		int HoldProjectile = -1;
 		/** Where Raise / Lower Ground works, fixed when the hold starts. */
