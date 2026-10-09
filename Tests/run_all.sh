@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds and runs every simulation test: kernel math + thermodynamics, reaction scenarios, terrain, water whip and
-# the 3D sandbox (native), then both WebAssembly builds and parity checks that they reproduce the native results exactly.
+# Builds and runs every simulation test: kernel math + thermodynamics, reaction scenarios, terrain, water whip, the
+# sparring partner's brain and the 3D sandbox (native), then both WebAssembly builds and parity checks that they reproduce the native results exactly.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +19,7 @@ echo "== Building native tests with ${CXX}"
 "${CXX}" "${FLAGS[@]}" "${KERNEL[@]}" "${DEMO}/BendingSimDemo.cpp" "${ROOT}/Tests/Sim/ScenarioTests.cpp" -o "${OUT}/scenario_tests"
 "${CXX}" "${FLAGS[@]}" "${KERNEL[@]}" "${ROOT}/Tests/Sim/TerrainTests.cpp" -o "${OUT}/terrain_tests"
 "${CXX}" "${FLAGS[@]}" "${KERNEL[@]}" "${ROOT}/Tests/Sim/WhipTests.cpp" -o "${OUT}/whip_tests"
+"${CXX}" "${FLAGS[@]}" "${KERNEL[@]}" "${ROOT}/Tests/Sim/SparringTests.cpp" -o "${OUT}/sparring_tests"
 "${CXX}" "${FLAGS[@]}" -I "${SANDBOX}" "${KERNEL[@]}" "${SANDBOX}/BendingSandbox3D.cpp" "${ROOT}/Tests/Sim/SandboxTests.cpp" -o "${OUT}/sandbox_tests"
 
 echo "== Thermodynamics & kernel math"
@@ -29,6 +30,8 @@ echo "== Terrain & earthbending"
 "${OUT}/terrain_tests"
 echo "== Water whip"
 "${OUT}/whip_tests"
+echo "== Sparring partner"
+"${OUT}/sparring_tests"
 echo "== 3D sandbox"
 "${OUT}/sandbox_tests" "${OUT}/native_sandbox_digest.json"
 

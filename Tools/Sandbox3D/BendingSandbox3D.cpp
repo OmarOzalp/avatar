@@ -36,26 +36,13 @@ namespace BendingSandbox3D
 		constexpr double MinWallDistanceCm = 260.0;
 		constexpr double GroundFlameFollowCmS = 400.0;
 
-		// The sparring partner: a firebender the size of the player, a little slower on its feet.
+		// The sparring partner's body: the size of the player (its behaviour and tuning are FSparringBrain's).
 		constexpr double RivalRadiusCm = 32.0;
 		constexpr double RivalHalfHeightCm = 58.0;
 		constexpr double RivalMassKg = 70.0;
-		constexpr double RivalWalkCmS = 340.0;
-		constexpr double RivalRunCmS = 560.0;
-		constexpr double RivalDodgeCmS = 720.0;
-		constexpr double RivalAccelerationCmS2 = 2600.0;
-		/** It keeps between these distances from the player, circling in between. */
-		constexpr double RivalNearCm = 480.0;
-		constexpr double RivalFarCm = 950.0;
-		constexpr double RivalAttackRangeCm = 1500.0;
-		/** Closer than this, it answers with a burst of fire instead of a blast. */
-		constexpr double RivalBurstRangeCm = 330.0;
-		constexpr double RivalFlameTemperatureK = 1450.0;
 		constexpr double RivalHandHeightCm = 128.0;
 		/** Lingering fire (burning ground, a ground flame, a burning prop) hurts it: J of heating per point of damage. */
 		constexpr double RivalHeatJPerDamage = 25000.0;
-		/** A duel is called off when the player goes this far from the sparring post. */
-		constexpr double DuelLeashCm = 3500.0;
 		/** Out of a duel, health comes back this fast (per second). */
 		constexpr double RestHealPerS = 25.0;
 		constexpr double GuardSpeedScale = 0.35;
@@ -269,8 +256,10 @@ namespace BendingSandbox3D
 		Player = FPlayer();
 		Tornado = FTornado();
 		const bool bRivalEnabled = Rival.bEnabled;
+		const FSparringTuning RivalTuning = Rival.Brain.Tuning;
 		Rival = FRival();
 		Rival.bEnabled = bRivalEnabled;
+		Rival.Brain.Tuning = RivalTuning;
 		Player.LocationCm = Layout.PlayerStartCm;
 		Player.LocationCm.Z = Terrain.GetHeightAt(Player.LocationCm.X, Player.LocationCm.Y);
 		Player.YawRad = Layout.PlayerStartYawDeg * Pi / 180.0;
@@ -1937,41 +1926,36 @@ namespace BendingSandbox3D
 		{
 			return;
 		}
+		if (bRival)
+		{
+			// The sparring partner's brain decides what reaches it (a challenge, a guard, the per-blow cap).
+			FSparringEvents Events;
+			const double Taken = Rival.Brain.TakeDamage(Amount, bKnockOut, Events);
+			Body.Health = Rival.Brain.Health;
+			Body.FrameDamage += Taken;
+			if (Events.bKnockedOut)
+			{
+				Body.KnockoutS = Rival.Brain.DownS;
+				const FVec3 Flat2(FromDirection.X, FromDirection.Y, 0.0);
+				Body.FallDirection = Flat2.Size() > 1e-6 ? Flat2.GetSafeNormal() : FVec3(1.0, 0.0, 0.0);
+				AddPropEffect(ESandboxEffect::Hit, Body, Body.LocationCm + FVec3(0.0, 0.0, 60.0), Body.PendingDamage + Body.FrameDamage);
+				Body.FrameDamage = 0.0;
+				Body.PendingDamage = 0.0;
+				Body.PendingAgeS = 0.0;
+				AddPropEffect(ESandboxEffect::Knockout, Body, Body.LocationCm + FVec3(0.0, 0.0, 60.0), 0.0);
+			}
+			HandleRivalEvents(Events);
+			return;
+		}
 		if (bKnockOut)
 		{
 			Amount = Body.Health;
-		}
-		else if (bRival)
-		{
-			// Waiting at its post, a real hit is a challenge, not damage.
-			if (Rival.State == ERivalState::Waiting)
-			{
-				Rival.ChallengeDamage += Amount;
-				if (Rival.ChallengeDamage >= 3.0)
-				{
-					StartDuel();
-				}
-				return;
-			}
-			if (Rival.State == ERivalState::Returning || Rival.State == ERivalState::Ready || Rival.State == ERivalState::Down)
-			{
-				return;
-			}
-			if (Rival.State == ERivalState::Guarding)
-			{
-				Amount *= 0.25;
-			}
 		}
 		if (Body.ProtectS > 0.0 && !bKnockOut)
 		{
 			return;
 		}
-		// The sparring partner takes at most RivalBlowCap from one blow (even a boulder only staggers it), and no
-		// one takes more than the health they have left.
-		if (bRival && !bKnockOut)
-		{
-			Amount = KMin(Amount, KMax(RivalBlowCap - Body.PendingDamage - Body.FrameDamage, 0.0));
-		}
+		// No one takes more than the health they have left.
 		Amount = KMin(Amount, Body.Health);
 		if (Amount <= 0.0)
 		{
@@ -1979,16 +1963,12 @@ namespace BendingSandbox3D
 		}
 		Body.Health -= Amount;
 		Body.FrameDamage += Amount;
-		if (bRival)
-		{
-			Rival.FrameHurt += Amount;
-		}
 		if (Body.Health > 1e-6)
 		{
 			return;
 		}
 		Body.Health = 0.0;
-		Body.KnockoutS = bRival ? RivalDownSeconds : KnockoutSeconds;
+		Body.KnockoutS = KnockoutSeconds;
 		const FVec3 Flat2(FromDirection.X, FromDirection.Y, 0.0);
 		Body.FallDirection = Flat2.Size() > 1e-6 ? Flat2.GetSafeNormal() : FVec3(1.0, 0.0, 0.0);
 		AddPropEffect(ESandboxEffect::Hit, Body, Body.LocationCm + FVec3(0.0, 0.0, 60.0), Body.PendingDamage + Body.FrameDamage);
@@ -1996,11 +1976,6 @@ namespace BendingSandbox3D
 		Body.PendingDamage = 0.0;
 		Body.PendingAgeS = 0.0;
 		AddPropEffect(ESandboxEffect::Knockout, Body, Body.LocationCm + FVec3(0.0, 0.0, 60.0), 0.0);
-		if (bRival)
-		{
-			EndDuel(1);
-			return;
-		}
 		AddMessage("Dummy knocked out!");
 	}
 
@@ -2647,21 +2622,11 @@ namespace BendingSandbox3D
 	}
 	// ---------------------------------------------------------------------------------------------------- Sparring
 
-	double FSandbox::RivalRandom()
-	{
-		unsigned int X = Rival.Seed;
-		X ^= X << 13;
-		X ^= X >> 17;
-		X ^= X << 5;
-		Rival.Seed = X ? X : 0x2545F491u;
-		return static_cast<double>(X & 0xFFFFFFu) / 16777216.0;
-	}
-
 	FVec3 FSandbox::GetRivalFeetCm() const
 	{
 		if (Rival.Body < 0)
 		{
-			return Rival.PostCm;
+			return Rival.Brain.PostCm;
 		}
 		const FBody& Body = Bodies[Rival.Body];
 		return Body.LocationCm - FVec3(0.0, 0.0, Body.HalfHeightCm + Body.RadiusCm);
@@ -2674,15 +2639,15 @@ namespace BendingSandbox3D
 
 	bool FSandbox::IsDuelActive() const
 	{
-		return Rival.Body >= 0 && Rival.State != ERivalState::Waiting && Rival.State != ERivalState::Returning && Rival.State != ERivalState::Down;
+		return Rival.Body >= 0 && Rival.Brain.IsDuelActive();
 	}
 
 	void FSandbox::SpawnRival()
 	{
-		Rival.PostCm = Layout.SparringPostCm;
-		Rival.PostCm.Z = Terrain.GetHeightAt(Rival.PostCm.X, Rival.PostCm.Y);
-		const FVec3 ToStart = Flat(Layout.PlayerStartCm - Rival.PostCm);
-		Rival.YawRad = KAtan2(ToStart.Y, ToStart.X);
+		FVec3 Post = Layout.SparringPostCm;
+		Post.Z = Terrain.GetHeightAt(Post.X, Post.Y);
+		const FVec3 ToStart = Flat(Layout.PlayerStartCm - Post);
+		Rival.Brain.Reset(Post, KAtan2(ToStart.Y, ToStart.X));
 
 		// A person-sized capsule: solid, it does not soak up water.
 		FVolume Volume = FVolume::MakeDefault(ESubstance::Earth, RivalMassKg);
@@ -2692,72 +2657,72 @@ namespace BendingSandbox3D
 		Volume.Shape = EShape::Capsule;
 		Volume.CapsuleHalfAxisCm = FVec3(0.0, 0.0, RivalHalfHeightCm);
 		Volume.DragCoefficient = 1.0;
-		Volume.LocationCm = Rival.PostCm + FVec3(0.0, 0.0, RivalHalfHeightCm + RivalRadiusCm);
+		Volume.LocationCm = Post + FVec3(0.0, 0.0, RivalHalfHeightCm + RivalRadiusCm);
 
 		FBody Body;
 		Body.Kind = EBodyKind::Rival;
 		// Struck, it rocks and falls like a training dummy.
 		Body.Prop = EArenaProp::Dummy;
 		Body.LocationCm = Volume.LocationCm;
-		Body.AnchorCm = Rival.PostCm;
+		Body.AnchorCm = Post;
 		Body.RadiusCm = RivalRadiusCm;
 		Body.HalfHeightCm = RivalHalfHeightCm;
 		Body.MassKg = RivalMassKg;
-		Body.YawRad = Rival.YawRad;
+		Body.YawRad = Rival.Brain.YawRad;
 		Body.Variant = static_cast<int>(Rival.Element);
-		Body.Health = DummyMaxHealth;
+		Body.Health = Rival.Brain.Health;
 		Body.HomeCm = Volume.LocationCm;
 		Rival.Body = AddBody(Body, Volume);
-		SetRivalState(ERivalState::Waiting, 0.0);
 	}
 
-	void FSandbox::SetRivalState(ERivalState State, double DurationS)
+	void FSandbox::HandleRivalEvents(const FSparringEvents& Events)
 	{
-		Rival.State = State;
-		Rival.StateTimeS = 0.0;
-		Rival.StateDurationS = DurationS;
-	}
-
-	void FSandbox::StartDuel()
-	{
-		FBody& Body = Bodies[Rival.Body];
-		Rival.ChallengeDamage = 0.0;
-		Rival.ShotsFired = 0;
-		Rival.Attack = ERivalAttack::None;
-		Body.Health = DummyMaxHealth;
-		Body.FrameDamage = 0.0;
-		Body.PendingDamage = 0.0;
-		Player.Health = Player.MaxHealth;
-		// It bows first.
-		SetRivalState(ERivalState::Ready, 0.9);
-		AddEffect(ESandboxEffect::DuelStart, GetRivalFeetCm() + FVec3(0.0, 0.0, 210.0), 0.0);
-		AddMessage("Duel! Knock your sparring partner down (hold C to guard)");
-	}
-
-	void FSandbox::EndDuel(int Winner)
-	{
-		if (Winner == 1)
-		{
-			++Rival.PlayerWins;
-		}
-		else if (Winner == 2)
-		{
-			++Rival.RivalWins;
-		}
-		Rival.Attack = ERivalAttack::None;
-		Rival.ShotsLeft = 0;
-		AddEffect(ESandboxEffect::DuelEnd, GetRivalFeetCm() + FVec3(0.0, 0.0, 210.0), 0.0);
-		FrameEvents[NumFrameEvents - 1].MassKg = Winner;
-		SetRivalState(Winner == 1 ? ERivalState::Down : ERivalState::Returning, 0.0);
-		if (Winner == 0)
+		if (Rival.Body < 0)
 		{
 			return;
 		}
+		FBody& Body = Bodies[Rival.Body];
+		const FSparringBrain& Brain = Rival.Brain;
+		const FVec3 Above = GetRivalFeetCm() + FVec3(0.0, 0.0, 210.0);
+		if (Events.bDuelStarted)
+		{
+			Body.Health = Brain.Health;
+			Body.FrameDamage = 0.0;
+			Body.PendingDamage = 0.0;
+			Player.Health = Player.MaxHealth;
+			AddEffect(ESandboxEffect::DuelStart, Above, 0.0);
+			AddMessage("Duel! Knock your sparring partner down (hold C to guard)");
+		}
+		if (Events.bWindUp)
+		{
+			AddEffect(ESandboxEffect::RivalWindUp, Rival.HandCm, 0.0);
+			FrameEvents[NumFrameEvents - 1].MassKg = static_cast<double>(Brain.Attack);
+		}
+		if (Events.Evaded > 0)
+		{
+			AddEffect(ESandboxEffect::RivalEvade, Body.LocationCm, 0.0);
+			FrameEvents[NumFrameEvents - 1].MassKg = Events.Evaded;
+		}
+		if (Events.bGotUp)
+		{
+			AddPropEffect(ESandboxEffect::Respawn, Body, GetRivalFeetCm(), 0.0);
+		}
+		if (Events.DuelEnded < 0)
+		{
+			return;
+		}
+		AddEffect(ESandboxEffect::DuelEnd, Above, 0.0);
+		FrameEvents[NumFrameEvents - 1].MassKg = Events.DuelEnded;
+		if (Events.DuelEnded == 0)
+		{
+			AddMessage("You left the ring: the duel is called off");
+			return;
+		}
 		char Text[96];
-		int Length = Append(Text, 0, sizeof(Text), Winner == 1 ? "You win the duel! (" : "Your sparring partner wins the duel (");
-		Length = AppendNumber(Text, Length, sizeof(Text), Rival.PlayerWins, 0);
+		int Length = Append(Text, 0, sizeof(Text), Events.DuelEnded == 1 ? "You win the duel! (" : "Your sparring partner wins the duel (");
+		Length = AppendNumber(Text, Length, sizeof(Text), Brain.PlayerWins, 0);
 		Length = Append(Text, Length, sizeof(Text), " - ");
-		Length = AppendNumber(Text, Length, sizeof(Text), Rival.RivalWins, 0);
+		Length = AppendNumber(Text, Length, sizeof(Text), Brain.PartnerWins, 0);
 		Append(Text, Length, sizeof(Text), ")");
 		AddMessage(Text);
 	}
@@ -2825,7 +2790,9 @@ namespace BendingSandbox3D
 		AddEffect(ESandboxEffect::PlayerDown, Player.LocationCm, 0.0);
 		if (IsDuelActive())
 		{
-			EndDuel(2);
+			FSparringEvents Events;
+			Rival.Brain.OnPlayerDown(Events);
+			HandleRivalEvents(Events);
 		}
 	}
 
@@ -2898,7 +2865,7 @@ namespace BendingSandbox3D
 				// Blocked: the flame splashes off the guard, a little gets through, and it costs stamina.
 				const FVec3 Up(0.0, 0.0, 1.0);
 				const FVec3 Across(-Direction.Y, Direction.X, 0.0);
-				Projectile.VelocityCmS = (Direction * -0.3 + Up * 0.7 + Across * (RivalRandom() < 0.5 ? -0.6 : 0.6)) * 450.0;
+				Projectile.VelocityCmS = (Direction * -0.3 + Up * 0.7 + Across * (Rival.Brain.Random() < 0.5 ? -0.6 : 0.6)) * 450.0;
 				Player.Stamina = KMax(Player.Stamina - BlockStamina, 0.0);
 				AddEffect(ESandboxEffect::Blocked, Projectile.LocationCm, Damage * BlockDamageScale);
 				HurtPlayer(Damage * BlockDamageScale, Direction, 0.35 * FlameKnockbackCmS, true);
@@ -2917,24 +2884,44 @@ namespace BendingSandbox3D
 		}
 	}
 
-	void FSandbox::RivalShoot(double MassKg, double SpeedMs, double SpreadRad, double Side)
+	void FSandbox::RivalShoot(const FSparringShot& Shot)
 	{
+		const FSparringTuning& Tune = Rival.Brain.Tuning;
 		const FVec3 Feet = GetRivalFeetCm();
-		const FVec3 Forward(KCos(Rival.YawRad), KSin(Rival.YawRad), 0.0);
+		const FVec3 Forward(KCos(Rival.Brain.YawRad), KSin(Rival.Brain.YawRad), 0.0);
 		const FVec3 Right(Forward.Y, -Forward.X, 0.0);
-		const FVec3 Shoulder = Feet + FVec3(0.0, 0.0, RivalHandHeightCm) + Right * (Side * 18.0);
+		if (Shot.Attack == ESparringAttack::Burst)
+		{
+			// A ring of flames bursting outward from its middle.
+			for (int Index = 0; Index < Tune.BurstFlames; ++Index)
+			{
+				const double Angle = Rival.Brain.YawRad + Index * 2.0 * Pi / Tune.BurstFlames;
+				const FVec3 Out(KCos(Angle), KSin(Angle), 0.0);
+				FVolume Flame = MakeFlame(Shot.MassKg, Tune.FlameTemperatureK, Feet, Out * MToCm(Shot.SpeedMs));
+				Flame.LocationCm = Feet + FVec3(0.0, 0.0, 85.0) + Out * (RivalRadiusCm + Flame.RadiusCm + 10.0);
+				const int Spawned = SpawnProjectile(EProjectileKind::Fire, Flame);
+				if (Spawned >= 0)
+				{
+					Projectiles[Spawned].Owner = 1;
+					Projectiles[Spawned].bThreatChecked = true;
+				}
+			}
+			AddEffect(ESandboxEffect::FireRing, Feet + FVec3(0.0, 0.0, 85.0), 0.0);
+			return;
+		}
+		const FVec3 Shoulder = Feet + FVec3(0.0, 0.0, RivalHandHeightCm) + Right * (Shot.Side * 18.0);
 		// At the chest, leading a moving target a little.
 		FVec3 Target = Player.LocationCm + FVec3(0.0, 0.0, 115.0);
-		const double FlightS = Distance(Shoulder, Target) / MToCm(SpeedMs);
+		const double FlightS = Distance(Shoulder, Target) / MToCm(Shot.SpeedMs);
 		Target += Flat(Player.VelocityCmS) * (0.5 * FlightS);
 		FVec3 Direction = (Target - Shoulder).GetSafeNormal();
 		if (Direction.IsZero())
 		{
 			Direction = Forward;
 		}
-		const double C = KCos(SpreadRad), S = KSin(SpreadRad);
+		const double C = KCos(Shot.SpreadRad), S = KSin(Shot.SpreadRad);
 		Direction = FVec3(Direction.X * C - Direction.Y * S, Direction.X * S + Direction.Y * C, Direction.Z);
-		FVolume Flame = MakeFlame(MassKg, RivalFlameTemperatureK, Shoulder, Direction * MToCm(SpeedMs));
+		FVolume Flame = MakeFlame(Shot.MassKg, Tune.FlameTemperatureK, Shoulder, Direction * MToCm(Shot.SpeedMs));
 		// Born clear of its own body, so its own fire never touches it.
 		Flame.LocationCm = Shoulder + Direction * (RivalRadiusCm + Flame.RadiusCm + 10.0);
 		const int Index = SpawnProjectile(EProjectileKind::Fire, Flame);
@@ -2945,24 +2932,36 @@ namespace BendingSandbox3D
 		}
 	}
 
-	void FSandbox::RivalBurst()
+	bool FSandbox::RivalHasClearShot(const FVec3& FeetCm) const
 	{
-		const FVec3 Feet = GetRivalFeetCm();
-		const int Count = 10;
-		for (int Index = 0; Index < Count; ++Index)
+		const FVec3 ToPlayer = Flat(Player.LocationCm - FeetCm);
+		const FVec3 Toward = ToPlayer.Size() > 1.0 ? ToPlayer.GetSafeNormal() : FVec3(KCos(Rival.Brain.YawRad), KSin(Rival.Brain.YawRad), 0.0);
+		const FVec3 Hand = FeetCm + FVec3(0.0, 0.0, RivalHandHeightCm) + Toward * 40.0;
+		const FVec3 Target = Player.LocationCm + FVec3(0.0, 0.0, 110.0);
+		const FVec3 Line = Target - Hand;
+		const double LineCm = Line.Size();
+		FVec3 Hit;
+		if (LineCm > 1.0 && Terrain.Raycast(Hand, Line / LineCm, LineCm, Hit))
 		{
-			const double Angle = Rival.YawRad + Index * 2.0 * Pi / Count;
-			const FVec3 Out(KCos(Angle), KSin(Angle), 0.0);
-			FVolume Flame = MakeFlame(0.3, RivalFlameTemperatureK, Feet, Out * 1100.0);
-			Flame.LocationCm = Feet + FVec3(0.0, 0.0, 85.0) + Out * (RivalRadiusCm + Flame.RadiusCm + 10.0);
-			const int Spawned = SpawnProjectile(EProjectileKind::Fire, Flame);
-			if (Spawned >= 0)
+			return false;
+		}
+		// Solid props in the way (lanterns, rocks, banners' poles) block it too.
+		for (int Index = 0; Index < NumBodies; ++Index)
+		{
+			const FBody& Other = Bodies[Index];
+			if (!Other.bAlive || Index == Rival.Body || Other.Kind == EBodyKind::ThrownRock)
 			{
-				Projectiles[Spawned].Owner = 1;
-				Projectiles[Spawned].bThreatChecked = true;
+				continue;
+			}
+			FVec3 CoreA, CoreB, OnLine, OnBody;
+			BodyCore(Other, CoreA, CoreB);
+			ClosestPointsBetweenSegments(Hand, Target, CoreA, CoreB, OnLine, OnBody);
+			if (Distance(OnLine, OnBody) < BodyCollisionRadius(Other) + 35.0)
+			{
+				return false;
 			}
 		}
-		AddEffect(ESandboxEffect::FireRing, Feet + FVec3(0.0, 0.0, 85.0), 0.0);
+		return true;
 	}
 
 	void FSandbox::UpdateRival(double Dt)
@@ -2972,36 +2971,13 @@ namespace BendingSandbox3D
 			return;
 		}
 		FBody& Body = Bodies[Rival.Body];
-		Rival.StateTimeS += Dt;
-		Rival.CooldownS = KMax(Rival.CooldownS - Dt, 0.0);
-		Rival.StrafeTimerS -= Dt;
+		FSparringBrain& Brain = Rival.Brain;
 		const double Ambient = World.Settings.AmbientTemperatureK;
 		const FVec3 Feet = GetRivalFeetCm();
-		const FVec3 ToPlayer = Flat(Player.LocationCm - Feet);
-		const double PlayerDistance = ToPlayer.Size();
-		const FVec3 Forward(KCos(Rival.YawRad), KSin(Rival.YawRad), 0.0);
-		const FVec3 ToPlayerDir = PlayerDistance > 1.0 ? ToPlayer / PlayerDistance : Forward;
-		const FVec3 Side(-ToPlayerDir.Y, ToPlayerDir.X, 0.0);
 		const double Ground = Terrain.GetHeightAt(Feet.X, Feet.Y);
-		const bool bGrounded = Feet.Z <= Ground + 8.0;
-		const bool bTimeUp = Rival.StateDurationS > 0.0 && Rival.StateTimeS >= Rival.StateDurationS;
-
-		// A big hit rocks it, interrupting whatever it was doing (a guard holds).
-		const double Hurt = Rival.FrameHurt;
-		Rival.FrameHurt = 0.0;
-		Rival.PoiseS = KMax(Rival.PoiseS - Dt, 0.0);
-		if (Hurt >= 8.0 && Rival.PoiseS <= 0.0 && (Rival.State == ERivalState::Moving || Rival.State == ERivalState::WindUp || Rival.State == ERivalState::Attacking
-			|| Rival.State == ERivalState::Recovering || Rival.State == ERivalState::Dodging))
-		{
-			Rival.Attack = ERivalAttack::None;
-			Rival.ShotsLeft = 0;
-			// Rocked once, it keeps its footing for a moment (no stun-locking it).
-			Rival.PoiseS = 1.6;
-			SetRivalState(ERivalState::Staggered, 0.45);
-		}
 
 		// Standing in fire hurts (flames that strike it are counted in UpdateFighterHits; its own never hurt it).
-		if (IsDuelActive())
+		if (Brain.IsDuelActive())
 		{
 			FHandle Handles[48];
 			const int Count = World.QueryVolumes(Body.LocationCm, Body.RadiusCm + 20.0, SubstanceMask(ESubstance::Fire), Handles, 48);
@@ -3025,254 +3001,59 @@ namespace BendingSandbox3D
 			}
 		}
 
-		FVec3 Desired;
-		bool bControl = bGrounded;
-		bool bFacePlayer = true;
-		switch (Rival.State)
+		FSparringSenses Senses;
+		Senses.FeetCm = Feet;
+		Senses.VelocityCmS = Body.VelocityCmS;
+		Senses.bGrounded = Feet.Z <= Ground + 8.0;
+		Senses.PlayerFeetCm = Player.LocationCm;
+		Senses.PlayerVelocityCmS = Player.VelocityCmS;
+		Senses.bPlayerDown = Player.DownS > 0.0;
+		Senses.bClearShot = Brain.State != ESparringState::Moving || RivalHasClearShot(Feet);
+		FSparringOrders Orders;
+		Brain.Update(Senses, Dt, Orders);
+
+		// Something thrown at it while it is free to react: guard or sidestep (or take it), decided once per throw.
+		for (int Index = 0; Index < MaxProjectiles + NumBodies && Brain.CanReact(); ++Index)
 		{
-		case ERivalState::Waiting:
-		{
-			const FVec3 ToPost = Flat(Rival.PostCm - Feet);
-			if (ToPost.Size() > 40.0)
+			FSparringThreat Threat;
+			bool* Checked = nullptr;
+			if (Index < MaxProjectiles)
 			{
-				Desired = ToPost.GetSafeNormal() * RivalWalkCmS;
-			}
-			bFacePlayer = PlayerDistance < 1800.0;
-			Body.Health = KMin(Body.Health + RestHealPerS * Dt, DummyMaxHealth);
-			break;
-		}
-		case ERivalState::Ready:
-			if (bTimeUp)
-			{
-				SetRivalState(ERivalState::Moving, 0.0);
-				Rival.CooldownS = 0.4 + 0.5 * RivalRandom();
-			}
-			break;
-		case ERivalState::Moving:
-		{
-			// Keep its distance: close in from far, back off from near, circle in between.
-			if (PlayerDistance > RivalFarCm)
-			{
-				Desired = ToPlayerDir * (PlayerDistance > 1.6 * RivalFarCm ? RivalRunCmS : RivalWalkCmS);
-			}
-			else if (PlayerDistance < RivalNearCm)
-			{
-				Desired = ToPlayerDir * -RivalWalkCmS + Side * (Rival.StrafeSign * 150.0);
+				FProjectile& Projectile = Projectiles[Index];
+				if (!Projectile.bAlive || Projectile.bThreatChecked || Projectile.Owner != 0 || Projectile.bLanded || Projectile.Kind == EProjectileKind::GroundFlame)
+				{
+					continue;
+				}
+				Threat.LocationCm = Projectile.LocationCm;
+				Threat.VelocityCmS = Projectile.VelocityCmS;
+				Checked = &Projectile.bThreatChecked;
 			}
 			else
 			{
-				Desired = Side * (Rival.StrafeSign * 260.0);
-			}
-			if (Rival.StrafeTimerS <= 0.0)
-			{
-				Rival.StrafeSign = RivalRandom() < 0.5 ? -1.0 : 1.0;
-				Rival.StrafeTimerS = 1.0 + 1.5 * RivalRandom();
-			}
-			if (Distance(Flat(Player.LocationCm), Flat(Rival.PostCm)) > DuelLeashCm)
-			{
-				AddMessage("You left the ring: the duel is called off");
-				EndDuel(0);
-				break;
-			}
-			if (Rival.CooldownS > 0.0 || PlayerDistance > RivalAttackRangeCm || Player.DownS > 0.0)
-			{
-				break;
-			}
-			// Only with a clear line to the player: a wall, a lantern or a rock in the way makes it work round.
-			const FVec3 Hand = Feet + FVec3(0.0, 0.0, RivalHandHeightCm) + ToPlayerDir * 40.0;
-			const FVec3 Target = Player.LocationCm + FVec3(0.0, 0.0, 110.0);
-			const FVec3 Line = Target - Hand;
-			const double LineCm = Line.Size();
-			FVec3 Hit;
-			bool bBlocked = LineCm > 1.0 && Terrain.Raycast(Hand, Line / LineCm, LineCm, Hit);
-			for (int Index = 0; Index < NumBodies && !bBlocked; ++Index)
-			{
-				const FBody& Other = Bodies[Index];
-				if (!Other.bAlive || Index == Rival.Body || Other.Kind == EBodyKind::ThrownRock)
+				FBody& Rock = Bodies[Index - MaxProjectiles];
+				if (!Rock.bAlive || Rock.Kind != EBodyKind::ThrownRock || Rock.bHeld || Rock.bThreatChecked || Rock.VelocityCmS.Size() < 600.0)
 				{
 					continue;
 				}
-				FVec3 CoreA, CoreB, OnLine, OnBody;
-				BodyCore(Other, CoreA, CoreB);
-				ClosestPointsBetweenSegments(Hand, Target, CoreA, CoreB, OnLine, OnBody);
-				bBlocked = Distance(OnLine, OnBody) < BodyCollisionRadius(Other) + 35.0;
+				Threat.LocationCm = Rock.LocationCm;
+				Threat.VelocityCmS = Rock.VelocityCmS;
+				Threat.bHeavy = true;
+				Checked = &Rock.bThreatChecked;
 			}
-			if (bBlocked)
+			if (Brain.IsThreatening(Threat, Body.LocationCm))
 			{
-				Rival.CooldownS = 0.3;
-				Desired = Desired + ToPlayerDir * 200.0;
-				break;
-			}
-			Rival.Attack = PlayerDistance < RivalBurstRangeCm ? ERivalAttack::Burst : (RivalRandom() < 0.35 ? ERivalAttack::Combo : ERivalAttack::Blast);
-			SetRivalState(ERivalState::WindUp, Rival.Attack == ERivalAttack::Burst ? 0.32 : (Rival.Attack == ERivalAttack::Combo ? 0.38 : 0.5));
-			AddEffect(ESandboxEffect::RivalWindUp, Rival.HandCm, 0.0);
-			FrameEvents[NumFrameEvents - 1].MassKg = static_cast<double>(Rival.Attack);
-			break;
-		}
-		case ERivalState::WindUp:
-			if (bTimeUp)
-			{
-				SetRivalState(ERivalState::Attacking, 0.0);
-				Rival.ShotsLeft = Rival.Attack == ERivalAttack::Combo ? 3 : 1;
-				Rival.ShotTimerS = 0.0;
-			}
-			break;
-		case ERivalState::Attacking:
-			Rival.ShotTimerS -= Dt;
-			if (Rival.ShotsLeft > 0 && Rival.ShotTimerS <= 0.0)
-			{
-				const double HandSide = Rival.ShotsFired % 2 == 0 ? 1.0 : -1.0;
-				switch (Rival.Attack)
-				{
-				case ERivalAttack::Blast: RivalShoot(0.6, 17.0, 0.0, HandSide); break;
-				case ERivalAttack::Combo: RivalShoot(0.4, 19.0, (Rival.ShotsLeft - 2) * 0.06, HandSide); break;
-				case ERivalAttack::Burst: RivalBurst(); break;
-				default: break;
-				}
-				--Rival.ShotsLeft;
-				++Rival.ShotsFired;
-				Rival.ShotTimerS = 0.2;
-			}
-			if (Rival.ShotsLeft <= 0 && Rival.ShotTimerS <= 0.1)
-			{
-				SetRivalState(ERivalState::Recovering, Rival.Attack == ERivalAttack::Combo ? 0.6 : (Rival.Attack == ERivalAttack::Burst ? 0.55 : 0.45));
-			}
-			break;
-		case ERivalState::Recovering:
-			if (bTimeUp)
-			{
-				SetRivalState(ERivalState::Moving, 0.0);
-				Rival.Attack = ERivalAttack::None;
-				Rival.CooldownS = 1.1 + 1.3 * RivalRandom();
-			}
-			break;
-		case ERivalState::Guarding:
-			if (bTimeUp)
-			{
-				// Out of a guard it answers quickly.
-				SetRivalState(ERivalState::Moving, 0.0);
-				Rival.CooldownS = KMin(Rival.CooldownS, 0.3);
-			}
-			break;
-		case ERivalState::Dodging:
-			Desired = Rival.DodgeDirection * RivalDodgeCmS;
-			if (bTimeUp)
-			{
-				SetRivalState(ERivalState::Moving, 0.0);
-			}
-			break;
-		case ERivalState::Staggered:
-			bControl = false;
-			if (bTimeUp)
-			{
-				SetRivalState(ERivalState::Moving, 0.0);
-				Rival.CooldownS = KMax(Rival.CooldownS, 0.4);
-			}
-			break;
-		case ERivalState::Down:
-			bControl = false;
-			bFacePlayer = false;
-			Body.KnockoutS -= Dt;
-			if (Body.KnockoutS <= 0.0)
-			{
-				// Up again, whole; it bows and walks back to its post.
-				Body.KnockoutS = 0.0;
-				Body.Health = DummyMaxHealth;
-				Body.ProtectS = 1.5;
-				AddPropEffect(ESandboxEffect::Respawn, Body, Feet, 0.0);
-				SetRivalState(ERivalState::Returning, 0.0);
-			}
-			break;
-		case ERivalState::Returning:
-			if (Rival.StateTimeS > 1.0)
-			{
-				const FVec3 ToPost = Flat(Rival.PostCm - Feet);
-				if (ToPost.Size() > 40.0)
-				{
-					Desired = ToPost.GetSafeNormal() * RivalWalkCmS;
-					bFacePlayer = false;
-				}
-				else
-				{
-					SetRivalState(ERivalState::Waiting, 0.0);
-				}
-			}
-			Body.Health = KMin(Body.Health + RestHealPerS * Dt, DummyMaxHealth);
-			break;
-		}
-
-		// Something thrown at it while it is free to react: guard or sidestep (or take it), decided once per throw.
-		if (Rival.State == ERivalState::Moving)
-		{
-			const FVec3 Center = Body.LocationCm;
-			bool bReacted = false;
-			for (int Index = 0; Index < MaxProjectiles + NumBodies && !bReacted; ++Index)
-			{
-				FVec3 Location, Velocity;
-				bool* Checked = nullptr;
-				bool bRock = false;
-				if (Index < MaxProjectiles)
-				{
-					FProjectile& Projectile = Projectiles[Index];
-					if (!Projectile.bAlive || Projectile.bThreatChecked || Projectile.Owner != 0 || Projectile.bLanded || Projectile.Kind == EProjectileKind::GroundFlame)
-					{
-						continue;
-					}
-					Location = Projectile.LocationCm;
-					Velocity = Projectile.VelocityCmS;
-					Checked = &Projectile.bThreatChecked;
-				}
-				else
-				{
-					FBody& Rock = Bodies[Index - MaxProjectiles];
-					if (!Rock.bAlive || Rock.Kind != EBodyKind::ThrownRock || Rock.bHeld || Rock.bThreatChecked || Rock.VelocityCmS.Size() < 600.0)
-					{
-						continue;
-					}
-					Location = Rock.LocationCm;
-					Velocity = Rock.VelocityCmS;
-					Checked = &Rock.bThreatChecked;
-					bRock = true;
-				}
-				const FVec3 Relative = Location - Center;
-				const double SpeedSquared = Velocity.SizeSquared();
-				const double ArriveS = SpeedSquared > 1.0 ? -Relative.Dot(Velocity) / SpeedSquared : -1.0;
-				if (ArriveS <= 0.0 || ArriveS > 0.6)
-				{
-					continue;
-				}
-				const FVec3 Passing = Relative + Velocity * ArriveS;
-				if (Passing.Size() > Body.RadiusCm + 130.0)
-				{
-					continue;
-				}
 				*Checked = true;
-				const double Roll = RivalRandom();
-				const double GuardChance = bRock ? 0.15 : 0.4;
-				const double DodgeChance = bRock ? 0.55 : 0.25;
-				if (Roll < GuardChance)
-				{
-					SetRivalState(ERivalState::Guarding, 0.55);
-					AddEffect(ESandboxEffect::RivalEvade, Center, 0.0);
-					FrameEvents[NumFrameEvents - 1].MassKg = 1.0;
-					bReacted = true;
-				}
-				else if (Roll < GuardChance + DodgeChance)
-				{
-					// Across the line of the throw, away from where it will pass.
-					FVec3 Across = FVec3(-Velocity.Y, Velocity.X, 0.0).GetSafeNormal();
-					const FVec3 PassingFlat = Flat(Passing);
-					const double Lean = PassingFlat.Size() > 10.0 ? -Across.Dot(PassingFlat) : Rival.StrafeSign;
-					Rival.DodgeDirection = Lean >= 0.0 ? Across : Across * -1.0;
-					SetRivalState(ERivalState::Dodging, 0.32);
-					AddEffect(ESandboxEffect::RivalEvade, Center, 0.0);
-					FrameEvents[NumFrameEvents - 1].MassKg = 2.0;
-					bReacted = true;
-				}
+				Brain.React(Threat, Body.LocationCm, Orders.Events);
+				break;
 			}
 		}
 
 		// It will not walk up a wall, into a pond or off the field.
+		FVec3 Desired = Orders.DesiredVelocityCmS;
+		if (Brain.State == ESparringState::Dodging)
+		{
+			Desired = Brain.DodgeDirection * Brain.Tuning.DodgeCmS;
+		}
 		if (!Desired.IsZero())
 		{
 			const FVec3 Ahead = Feet + Desired.GetSafeNormal() * 60.0;
@@ -3280,25 +3061,28 @@ namespace BendingSandbox3D
 			if (!Terrain.IsInside(Ahead.X, Ahead.Y) || Terrain.GetHeightAt(Ahead.X, Ahead.Y) - Ground > 40.0 || Pond >= 0)
 			{
 				Desired = FVec3();
-				Rival.StrafeSign = -Rival.StrafeSign;
+				Brain.OnBlocked();
 			}
 		}
 		// Knocked flying, it has no footing to steer with.
-		if (bControl && Flat(Body.VelocityCmS).Size() < 1200.0)
+		if (Orders.bControl && Flat(Body.VelocityCmS).Size() < 1200.0)
 		{
-			const FVec3 Horizontal = MoveToward(Flat(Body.VelocityCmS), Desired, RivalAccelerationCmS2 * Dt);
+			const FVec3 Horizontal = MoveToward(Flat(Body.VelocityCmS), Desired, Brain.Tuning.AccelerationCmS2 * Dt);
 			Body.VelocityCmS = FVec3(Horizontal.X, Horizontal.Y, Body.VelocityCmS.Z);
 		}
 
-		if (Rival.State != ERivalState::Down && Rival.State != ERivalState::Staggered)
-		{
-			const double TargetYaw = bFacePlayer ? KAtan2(ToPlayerDir.Y, ToPlayerDir.X) : (Desired.Size() > 10.0 ? KAtan2(Desired.Y, Desired.X) : Rival.YawRad);
-			Rival.YawRad = TurnToward(Rival.YawRad, TargetYaw, (Rival.State == ERivalState::WindUp ? 14.0 : 8.0) * Dt);
-		}
-		Body.YawRad = Rival.YawRad;
+		Body.YawRad = Brain.YawRad;
+		Body.Health = Brain.Health;
+		// Down, its body lies the way it was hit (the dummy tilt), until it gets up.
+		Body.KnockoutS = Brain.IsDown() ? KMax(Brain.DownS, 1e-3) : 0.0;
 		Rival.StridePhase = WrapAngle(Rival.StridePhase + Flat(Body.VelocityCmS).Size() * Dt / 140.0 * Pi);
-		const FVec3 Facing(KCos(Rival.YawRad), KSin(Rival.YawRad), 0.0);
+		const FVec3 Facing(KCos(Brain.YawRad), KSin(Brain.YawRad), 0.0);
 		const FVec3 Right(Facing.Y, -Facing.X, 0.0);
-		Rival.HandCm = Feet + FVec3(0.0, 0.0, RivalHandHeightCm) + Facing * 45.0 + Right * ((Rival.ShotsFired % 2 == 0 ? 1.0 : -1.0) * 18.0);
+		Rival.HandCm = Feet + FVec3(0.0, 0.0, RivalHandHeightCm) + Facing * 45.0 + Right * ((Brain.ShotsFired % 2 == 0 ? 1.0 : -1.0) * 18.0);
+		if (Orders.bShoot)
+		{
+			RivalShoot(Orders.Shot);
+		}
+		HandleRivalEvents(Orders.Events);
 	}
 }

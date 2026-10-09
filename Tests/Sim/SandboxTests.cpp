@@ -119,7 +119,7 @@ namespace
 			Props += GSandbox.Bodies[Index].bAlive && GSandbox.Bodies[Index].Kind == EBodyKind::Prop ? 1 : 0;
 		}
 		ExpectTrue("every prop of the layout is in the world", Props == GSandbox.Layout.NumProps);
-		ExpectTrue("the sparring partner waits at its post", GSandbox.Rival.Body >= 0 && GSandbox.Rival.State == ERivalState::Waiting);
+		ExpectTrue("the sparring partner waits at its post", GSandbox.Rival.Body >= 0 && GSandbox.Rival.Brain.State == ERivalState::Waiting);
 		ExpectTrue("three braziers burn", GSandbox.Bodies[FindProp(EArenaProp::Brazier, 0)].bLit && GSandbox.Bodies[FindProp(EArenaProp::Brazier, 2)].bLit);
 		Run(LookAt(GSandbox.Player.LocationCm + FVec3(1000.0, 0.0, 0.0)), 2.0);
 		const FBody& Stone = GSandbox.Bodies[FindProp(EArenaProp::Stone)];
@@ -756,11 +756,11 @@ namespace
 		SetStance(ETechniqueElement::Fire);
 		Run(LookAt(RivalChest()), 0.5);
 		Press(ETechniqueSlot::Primary, RivalChest(), 0.1);
-		for (int Frame = 0; Frame < 180 && GSandbox.Rival.State == ERivalState::Waiting; ++Frame)
+		for (int Frame = 0; Frame < 180 && GSandbox.Rival.Brain.State == ERivalState::Waiting; ++Frame)
 		{
 			GSandbox.Advance(LookAt(RivalChest()), Dt);
 		}
-		return GSandbox.Rival.State != ERivalState::Waiting;
+		return GSandbox.Rival.Brain.State != ERivalState::Waiting;
 	}
 
 	/** True when one of the sparring partner's flames will reach the player within Seconds. */
@@ -788,7 +788,7 @@ namespace
 		GSandbox.Init();
 		const FVec3 Post = GSandbox.Bodies[GSandbox.Rival.Body].LocationCm;
 		Run(LookAt(GSandbox.Player.LocationCm + FVec3(0.0, -1000.0, 0.0)), 3.0);
-		ExpectTrue("left alone, it waits at its post", GSandbox.Rival.State == ERivalState::Waiting && CountRivalFlames() == 0
+		ExpectTrue("left alone, it waits at its post", GSandbox.Rival.Brain.State == ERivalState::Waiting && CountRivalFlames() == 0
 			&& Distance(GSandbox.Bodies[GSandbox.Rival.Body].LocationCm, Post) < 50.0);
 		ExpectTrue("a fire blast challenges it", ChallengeRival());
 		ExpectTrue("and the duel is announced", HasMessage("Duel!"));
@@ -869,7 +869,7 @@ namespace
 		Run(LookAt(RivalChest()), 1.0);
 		std::printf("    sparring partner after the parry: %.0f health (was %.0f)\n", GSandbox.Bodies[GSandbox.Rival.Body].Health, RivalBefore);
 		ExpectTrue("it strikes the sparring partner (or its guard)", GSandbox.Bodies[GSandbox.Rival.Body].Health < RivalBefore
-			|| GSandbox.Rival.State == ERivalState::Guarding || GSandbox.Rival.State == ERivalState::Dodging);
+			|| GSandbox.Rival.Brain.State == ERivalState::Guarding || GSandbox.Rival.Brain.State == ERivalState::Dodging);
 	}
 
 	void DuelsAreWonAndLost()
@@ -880,7 +880,7 @@ namespace
 		SetStance(ETechniqueElement::Air);
 		int Blasts = 0;
 		int Mixed = 0;
-		for (int Frame = 0; Frame < 60 * 40 && GSandbox.Rival.State != ERivalState::Down; ++Frame)
+		for (int Frame = 0; Frame < 60 * 40 && GSandbox.Rival.Brain.State != ERivalState::Down; ++Frame)
 		{
 			FInput Input = LookAt(RivalChest());
 			// An air blast whenever ready.
@@ -891,15 +891,15 @@ namespace
 			{
 				const FSandboxEvent& E = GSandbox.FrameEvents[Event];
 				Mixed += E.Type != EReactionType::None && E.Effect != ESandboxEffect::None ? 1 : 0;
-				Mixed += E.Effect == ESandboxEffect::Hit && E.EnergyJ > FSandbox::RivalBlowCap + 1e-9 ? 1 : 0;
+				Mixed += E.Effect == ESandboxEffect::Hit && E.EnergyJ > GSandbox.Rival.Brain.Tuning.BlowCap + 1e-9 ? 1 : 0;
 			}
 		}
 		ExpectTrue("every event is a reaction or an effect, never both (no ghost hits)", Mixed == 0);
 		std::printf("    knocked out with %d air blasts\n", Blasts);
-		ExpectTrue("air blasts knock the sparring partner out", GSandbox.Rival.State == ERivalState::Down && GSandbox.Rival.PlayerWins == 1);
+		ExpectTrue("air blasts knock the sparring partner out", GSandbox.Rival.Brain.State == ERivalState::Down && GSandbox.Rival.Brain.PlayerWins == 1);
 		ExpectTrue("you win the duel", HasMessage("You win the duel"));
-		Run(LookAt(RivalChest()), FSandbox::RivalDownSeconds + 6.0);
-		ExpectTrue("it gets up and walks back to its post", GSandbox.Rival.State == ERivalState::Waiting);
+		Run(LookAt(RivalChest()), GSandbox.Rival.Brain.Tuning.DownS + 6.0);
+		ExpectTrue("it gets up and walks back to its post", GSandbox.Rival.Brain.State == ERivalState::Waiting);
 		ExpectTrue("whole again", GSandbox.Bodies[GSandbox.Rival.Body].Health == FSandbox::DummyMaxHealth);
 
 		// Standing still without guarding loses.
@@ -910,7 +910,7 @@ namespace
 			GSandbox.Advance(LookAt(RivalChest()), Dt);
 		}
 		std::printf("    knocked down after %.0f s of standing still\n", GSandbox.TimeS);
-		ExpectTrue("standing still, the player is knocked down", GSandbox.Player.DownS > 0.0 && GSandbox.Rival.RivalWins == 1);
+		ExpectTrue("standing still, the player is knocked down", GSandbox.Player.DownS > 0.0 && GSandbox.Rival.Brain.PartnerWins == 1);
 		ExpectTrue("and the duel is over", !GSandbox.IsDuelActive());
 		// Thrown back by the blow, then flat on the ground: pushing forward does nothing.
 		Run(LookAt(RivalChest()), 0.8);
@@ -922,7 +922,7 @@ namespace
 		Run(LookAt(RivalChest()), FSandbox::PlayerDownSeconds - 1.7);
 		ExpectTrue("up again with full health", GSandbox.Player.DownS <= 0.0 && GSandbox.Player.Health == GSandbox.Player.MaxHealth);
 		Run(LookAt(RivalChest()), 8.0);
-		ExpectTrue("the sparring partner goes back to its post", GSandbox.Rival.State == ERivalState::Waiting);
+		ExpectTrue("the sparring partner goes back to its post", GSandbox.Rival.Brain.State == ERivalState::Waiting);
 	}
 
 	void FreezeCostsLatentHeat()

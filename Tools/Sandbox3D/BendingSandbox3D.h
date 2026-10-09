@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Sim/BendingArena.h"
+#include "Sim/BendingSparring.h"
 #include "Sim/BendingTechniques.h"
 #include "Sim/BendingWaterWhip.h"
 
@@ -193,76 +194,21 @@ namespace BendingSandbox3D
 		FVec3 FallDirection = FVec3(1.0, 0.0, 0.0);
 	};
 
-	/** The sparring partner's behaviour, one state at a time. */
-	enum class ERivalState : unsigned char
-	{
-		/** At its post, waiting to be challenged: hit it to start a duel. */
-		Waiting,
-		/** Bowing before the first exchange. */
-		Ready,
-		/** Keeping its distance: closing in, backing off, circling. */
-		Moving,
-		/** Telegraphing an attack: fist drawn back, glowing. The opening to strike first or guard. */
-		WindUp,
-		Attacking,
-		/** Committed: cannot guard or dodge. The opening to punish. */
-		Recovering,
-		/** Takes a quarter of the damage. */
-		Guarding,
-		/** Sidestepping something thrown at it. */
-		Dodging,
-		/** Rocked by a big hit: cannot act. */
-		Staggered,
-		/** Knocked out: the duel is the player's. */
-		Down,
-		/** Duel over: bows, walks back to its post. */
-		Returning
-	};
+	/** The sparring partner's states and attacks: its mind is the kernel's FSparringBrain, shared with Unreal. */
+	using ERivalState = ESparringState;
+	using ERivalAttack = ESparringAttack;
 
-	enum class ERivalAttack : unsigned char
-	{
-		None,
-		/** One heavy fire blast. */
-		Blast,
-		/** Three quick blasts, left, right, left. */
-		Combo,
-		/** Up close: a ring of fire bursting outward that shoves the player away. */
-		Burst
-	};
-
-	/** A firebender who spars with the player: it circles, attacks with fire, guards, dodges, and can be knocked out. */
+	/** A firebender who spars with the player: its body in the simulation, its mind an FSparringBrain. */
 	struct FRival
 	{
 		bool bEnabled = true;
 		/** Its body in Bodies (EBodyKind::Rival), or -1. */
 		int Body = -1;
 		ETechniqueElement Element = ETechniqueElement::Fire;
-		ERivalState State = ERivalState::Waiting;
-		ERivalAttack Attack = ERivalAttack::None;
-		double StateTimeS = 0.0;
-		/** How long the current state lasts (s; 0 = until something happens). */
-		double StateDurationS = 0.0;
-		double CooldownS = 0.0;
-		int ShotsLeft = 0;
-		int ShotsFired = 0;
-		double ShotTimerS = 0.0;
-		double StrafeSign = 1.0;
-		double StrafeTimerS = 0.0;
-		FVec3 DodgeDirection;
-		double YawRad = 0.0;
-		/** Where it waits for a challenge (feet). */
-		FVec3 PostCm;
-		/** The hand it attacks from. */
+		FSparringBrain Brain;
+		/** The hand it attacks from, and its walk cycle, for the renderer. */
 		FVec3 HandCm;
 		double StridePhase = 0.0;
-		/** Damage taken since its last update (a big hit staggers it); damage that challenged it while waiting. */
-		double FrameHurt = 0.0;
-		double ChallengeDamage = 0.0;
-		/** Just staggered: another big hit will not stagger it again until this runs out. */
-		double PoiseS = 0.0;
-		int PlayerWins = 0;
-		int RivalWins = 0;
-		unsigned int Seed = 0x2545F491u;
 	};
 
 
@@ -468,9 +414,6 @@ namespace BendingSandbox3D
 		 * travelled. bKnockOut knocks it out whatever its health (burnt through, thrown off the field).
 		 */
 		void DamageBody(int Index, double Amount, const FVec3& FromDirection, bool bKnockOut = false);
-		/** The sparring partner takes at most this much from one blow. */
-		static constexpr double RivalBlowCap = 40.0;
-		static constexpr double RivalDownSeconds = 4.0;
 		static constexpr double PlayerDownSeconds = 3.0;
 		/** A guard raised this recently parries: the attack flies back at whoever sent it. */
 		static constexpr double ParryWindowS = 0.2;
@@ -485,19 +428,16 @@ namespace BendingSandbox3D
 		/** Reports the frame's damage as hits, and stands knocked-out dummies back up. */
 		void UpdateDummies(double Dt);
 		void SpawnRival();
-		/** The sparring partner's decisions and movement (before bodies move). */
+		/** The sparring partner: what it sees goes to its brain, and its orders move its body and bend its flames. */
 		void UpdateRival(double Dt);
 		/** Flames striking fighters: the sparring partner's at the player (guard, parry), the player's at the sparring partner. */
 		void UpdateFighterHits();
 		void UpdateGuard(const FInput& Input, double Dt);
-		void SetRivalState(ERivalState State, double DurationS);
-		void RivalShoot(double MassKg, double SpeedMs, double SpreadRad, double Side);
-		void RivalBurst();
-		void StartDuel();
-		void EndDuel(int Winner);
+		void RivalShoot(const FSparringShot& Shot);
+		bool RivalHasClearShot(const FVec3& FeetCm) const;
+		/** Messages and effects for what the sparring partner's brain reports. */
+		void HandleRivalEvents(const FSparringEvents& Events);
 		void HurtPlayer(double Damage, const FVec3& Direction, double KnockbackCmS, bool bBlocked = false);
-		/** 0..1, deterministic. */
-		double RivalRandom();
 		FVec3 GetRivalFeetCm() const;
 		FVec3 GetRivalChestCm() const;
 		/** Ground flame fed by the current hold. */
