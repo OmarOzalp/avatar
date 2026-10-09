@@ -59,7 +59,7 @@ public:
 	void MakeSpray(double DragTimeS);
 
 	/** A released ground flame burns the ground it lit: FuelJ of heat at PowerW, unless water puts it out first. */
-	void SetFuel(double FuelJ, double PowerW);
+	void SetFuel(double InFuelJ, double PowerW);
 
 	EBendingProjectileKind GetKind() const { return Kind; }
 	FVector GetVelocityCmS() const { return VelocityCmS; }

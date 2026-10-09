@@ -115,14 +115,14 @@ namespace BendingSim
 		 * Draws WaterMassKg out of a source at SourceCm (a pond surface). The water starts strung between the source
 		 * and the hand and streams into the circling loop over FormSeconds.
 		 */
-		bool Create(FSimWorld& World, const FVec3& SourceCm, const FVec3& HandCm, double WaterMassKg, double TemperatureK);
+		bool Create(FSimWorld& World, const FVec3& InSourceCm, const FVec3& InHandCm, double WaterMassKg, double TemperatureK);
 		/** Removes the segment volumes without releasing anything. */
 		void Destroy(FSimWorld& World);
 
 		/** Bender input, every frame. */
-		void SetControl(const FVec3& HandCm, const FVec3& HandVelocityCmS, const FVec3& AimPointCm);
+		void SetControl(const FVec3& InHandCm, const FVec3& InHandVelocityCmS, const FVec3& InAimPointCm);
 		/** The chest the water circles. Without it, a point behind and inside the hand is assumed. */
-		void SetBodyCenter(const FVec3& BodyCenterCm);
+		void SetBodyCenter(const FVec3& InBodyCenterCm);
 		/**
 		 * Starts a lash toward the aim: windup, strike, a beat at full reach, then back into the loop. Accepted while
 		 * circling, at full reach or on the way back (lashes chain); false while forming or mid-strike.

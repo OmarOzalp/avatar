@@ -2,6 +2,7 @@
 
 #include "BendingSettings.h"
 #include "CollisionQueryParams.h"
+#include "CollisionShape.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"

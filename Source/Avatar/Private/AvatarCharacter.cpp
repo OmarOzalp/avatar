@@ -482,15 +482,15 @@ void AAvatarCharacter::Input_Move(const FInputActionValue& Value)
 		return;
 	}
 	const FRotator YawRotation(0.0, Controller->GetControlRotation().Yaw, 0.0);
-	AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X), Axis.Y);
-	AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y), Axis.X);
+	AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X), static_cast<float>(Axis.Y));
+	AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y), static_cast<float>(Axis.X));
 }
 
 void AAvatarCharacter::Input_Look(const FInputActionValue& Value)
 {
 	const FVector2D Axis = Value.Get<FVector2D>();
-	AddControllerYawInput(Axis.X);
-	AddControllerPitchInput(Axis.Y);
+	AddControllerYawInput(static_cast<float>(Axis.X));
+	AddControllerPitchInput(static_cast<float>(Axis.Y));
 }
 
 void AAvatarCharacter::Input_BendingPressed(FGameplayTag InputTag)

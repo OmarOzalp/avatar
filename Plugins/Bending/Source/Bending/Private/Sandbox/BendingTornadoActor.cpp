@@ -6,6 +6,7 @@
 #include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Physics/BendingUnits.h"
 #include "Sandbox/BendingProjectile.h"
 #include "Sandbox/BendingPropActor.h"
@@ -21,7 +22,7 @@ namespace
 	constexpr double MaxLiftHeightCm = 600.0;
 	constexpr double MaxProjectileHeightCm = 1000.0;
 
-	const BendingSim::FTechniqueTuning& GetTuning()
+	const BendingSim::FTechniqueTuning& GetTornadoTuning()
 	{
 		return BendingSim::GetDefaultTechniqueTuning();
 	}
@@ -96,7 +97,7 @@ void ABendingTornadoActor::PullBodies(double Strength, float DeltaSeconds)
 {
 	// What it catches swirls round, is drawn in, and (if light enough) is lifted. Equal acceleration for every
 	// body, except that the lift fades for anything heavier than 150 kg: boulders only shuffle.
-	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const BendingSim::FTechniqueTuning& Tuning = GetTornadoTuning();
 	const FVector Center = GetActorLocation();
 	const double Reach = Tuning.TornadoRadiusCm * 1.8;
 	const double Swirl = BendingUnits::MToCm(Tuning.TornadoSwirlMs);
@@ -134,7 +135,7 @@ void ABendingTornadoActor::PullBodies(double Strength, float DeltaSeconds)
 void ABendingTornadoActor::CatchProjectiles(double Strength, float DeltaSeconds)
 {
 	// Flames, water and air nearby are drawn into the spiral; flame caught in it makes a fire tornado.
-	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const BendingSim::FTechniqueTuning& Tuning = GetTornadoTuning();
 	const FVector Center = GetActorLocation();
 	const double Reach = Tuning.TornadoRadiusCm * 1.8 * 1.2;
 	const double Swirl = BendingUnits::MToCm(Tuning.TornadoSwirlMs);
@@ -171,7 +172,7 @@ void ABendingTornadoActor::CatchProjectiles(double Strength, float DeltaSeconds)
 
 void ABendingTornadoActor::ShedAir(double Strength, float DeltaSeconds)
 {
-	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const BendingSim::FTechniqueTuning& Tuning = GetTornadoTuning();
 	AirAccumulator = FMath::Min(AirAccumulator + DeltaSeconds * AirPuffsPerSecond, 2.0);
 	while (AirAccumulator >= 1.0)
 	{
@@ -189,7 +190,7 @@ void ABendingTornadoActor::ShedAir(double Strength, float DeltaSeconds)
 
 void ABendingTornadoActor::UpdateVisuals(double Strength)
 {
-	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const BendingSim::FTechniqueTuning& Tuning = GetTornadoTuning();
 	const FVector Center = GetActorLocation();
 	const double Time = AgeSeconds;
 	const double Grow = 0.4 + 0.6 * Strength;

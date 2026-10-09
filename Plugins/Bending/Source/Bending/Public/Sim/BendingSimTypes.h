@@ -107,7 +107,7 @@ namespace BendingSim
 		FVec3 PendingImpulseKgCmS;
 
 		/** Real-world defaults for a substance: temperature, drag, porosity, and a radius matching the mass. */
-		static FVolume MakeDefault(ESubstance Substance, double MassKg);
+		static FVolume MakeDefault(ESubstance InSubstance, double InMassKg);
 
 		const FSubstanceProperties& GetProperties() const { return GetSubstanceProperties(Substance); }
 		bool IsGas() const { return GetProperties().bIsGas; }
