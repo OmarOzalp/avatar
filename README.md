@@ -10,19 +10,24 @@ Bending is real physics with martial-arts timing:
 ## Play the training ground
 
 A third-person sandbox: walk around a training arena in a small valley, with two ponds, rocks, boulders, straw
-dummies, braziers and blocks of ice, and bend all four elements. The ground is deformable, the water whip is a
-simulated stream of water, and everything you throw interacts through the same physics kernel.
+dummies, braziers and blocks of ice, and bend all four elements with five techniques each. The ground is deformable,
+the water whip is a simulated stream of water, water puts out fire, and everything you throw interacts through the
+same physics kernel.
 
 ### In Unreal Engine 5.8
 
-1. Install Unreal Engine 5.8.
-2. Right-click `Avatar.uproject` → *Generate project files*, then build the `AvatarEditor` target (Development Editor).
-   Opening the `.uproject` directly also offers to build the modules.
-3. Open the project and press **Play**.
+1. Install Unreal Engine 5.8, and on Windows Visual Studio 2022 with the *Game development with C++* workload (on
+   macOS, Xcode). This is a C++ project, so the engine has to compile its two modules once.
+2. Clone this repository (branch `claude/bending-core-foundation`).
+3. Right-click `Avatar.uproject` → *Generate Visual Studio project files* (macOS: *Generate Xcode project*).
+4. Open `Avatar.sln`, set the configuration to **Development Editor** and the start-up project to **Avatar**, and
+   build (Ctrl+Shift+B). Opening the `.uproject` directly also offers to build the modules: answer *Yes*.
+5. When the editor opens, press **Play** (Alt+P). Click into the viewport so it takes the mouse.
 
 There are no assets to create. The project starts on an empty engine map, and `AAvatarGameMode` builds the arena
-from code when the level starts: the terrain, ponds, props and lighting. The character and props are made of
-engine basic shapes, and the HUD is drawn on the canvas.
+from code when the level starts: the terrain, ponds, props and lighting. The character, props and effects are made of
+engine basic shapes, and the HUD is drawn on the canvas. It plays the same techniques as the browser build, but it
+looks much plainer: the cartoon look, shaders and particle effects exist only in the browser build so far.
 
 > The Unreal code has not been compiled yet: the environment it was written in has no engine. Expect a short round
 > of fixes on the first build. See [First build](docs/ARCHITECTURE.md#first-build) for the parts most likely to need them.
@@ -34,12 +39,16 @@ Tools/Sandbox3D/build_web.sh     # writes Tools/Sandbox3D/build/BendingTrainingG
 ```
 
 The browser build is the same arena and techniques, running the same C++ kernel compiled to WebAssembly, and it is
-where the look is developed first. It has:
-- **Lighting:** physically based, with filmic tone mapping, a sky with drifting clouds and distant mountains.
-- **Ground and arena:** textured ground with grass, a sand arena ringed by stone, banners in the four elements'
-  colours, lanterns and trees.
-- **Water:** a glossy, rippling whip, droplets and splashes, and ponds with waves, reflections and ripples.
-- **Fire:** animated flames with embers and smoke.
+where the look is developed first. It is a bright, cel-shaded cartoon:
+- **Bender:** a cartoon character with ink outlines and bouncy, spring-driven animation: a pose for every technique,
+  squash on landing, a hop when you switch stance.
+- **Arena:** toon grass and a sand arena ringed by stone, banners in the four elements' colours, lanterns, trees and
+  a sky with drifting clouds.
+- **Water:** a glossy, rippling whip with foam, droplets and splashes; ponds with waves and ripples, and a ring on the
+  shore when you are close enough to draw water.
+- **Fire:** hard-edged cartoon flames that lick and stretch as they fly, with embers, smoke and scorch marks.
+- **Effects:** ice daggers with cold-light trails, a shockwave with rocks punching up, a swirling tornado that turns
+  into a fire tornado, a ball of air to ride, floating callouts and camera kick.
 
 It is also the quickest way to try a change to the physics. The Unreal build still draws everything with basic
 shapes; its materials and Niagara effects come next.
@@ -52,21 +61,26 @@ shapes; its materials and Niagara effects come next.
 | Shift | Sprint |
 | Space | Jump |
 | 1 2 3 4 | Water, Earth, Fire, Air stance |
-| Left mouse, right mouse, Q, E | The stance's techniques (below) |
+| Left mouse, right mouse, Q, E, F | The stance's techniques (below); F is its signature move |
 | H | Show or hide the controls panel |
 
-| Stance | Left mouse | Right mouse | Q | E |
-|---|---|---|---|---|
-| **1 Water** | Water Whip: draw from a pond within 15 m and it circles you; press to lash, and it snaps out to the aim and flows back | Freeze / Thaw the whip | Release: the water soaks into the ground (mud) | Water Blast: throw the whip as one ball |
-| **2 Earth** | Rock Throw: pull a rock from the ground (leaves a crater) and hurl it | Earth Wall | Raise Ground (hold) | Lower Ground (hold) |
-| **3 Fire** | Fire Blast | Flame Stream (hold) | | Ground Flame (hold) |
-| **4 Air** | Air Blast | Gust (hold) | | Air Jump |
+| Stance | Left mouse | Right mouse | Q | E | F (signature) |
+|---|---|---|---|---|---|
+| **1 Water** | Water Whip: draw from a pond within 15 m and it circles you; press to lash, and it snaps out to the aim and flows back | Freeze / Thaw the whip | Release: the water soaks into the ground (mud) | Water Blast: throw the whip as one ball | Ice Daggers: freeze water off the whip into five daggers and throw them |
+| **2 Earth** | Rock Throw: pull a rock from the ground (leaves a crater) and hurl it | Earth Wall | Raise Ground (hold) | Lower Ground (hold) | Earthquake: stomp, and everything around you is thrown outward |
+| **3 Fire** | Fire Blast | Flame Stream (hold) | Jet Dash: fire from your feet launches you forward | Ground Flame (hold) | Ring of Fire: a spin kick bursts flame out in every direction |
+| **4 Air** | Air Blast | Gust (hold) | Air Scooter (hold): ride a spinning ball of air at 14 m/s | Air Jump | Tornado: spin one up at the aim; it pulls things in and lifts them |
 
 The HUD shows chi and stamina, the current move's Startup / Active / Recovery frames with the cancel window, what
 each technique did and what it cost, and every reaction between elements as it happens.
 
 **Things to try**
+- Water only comes from a pond: walk within 15 m (the HUD and a ring on the shore tell you), then left-click.
 - Lash a lit brazier: the stream and the spray flung off its tip boil to steam, and two lashes put the fire out. Hit the brazier with fire to relight it.
+- Light a ground flame (Fire, hold E), then lash it once with water: it goes out.
+- Spin up a tornado next to the stones (Air, F), switch to Fire and throw a fire blast into it: a fire tornado.
+- Stomp an earthquake (Earth, F) in the middle of the stones, then try it next to a boulder.
+- Throw ice daggers (Water, F) at a dummy. They take water from the whip, so it gets shorter.
 - Lash the ground in front of you: the stream slaps it and splashes.
 - Freeze the whip (it costs about 32 chi to freeze 20 kg of water), then thaw it again.
 - Release the whip or throw a water blast onto soil, then run across the mud. It is slippery: you speed up and stop slowly until a ground flame dries it.
@@ -107,7 +121,7 @@ docs/ARCHITECTURE.md         Design, equations, roadmap
 The physics kernel builds and runs without the engine (clang++ and Node 18+):
 
 ```
-Tests/run_all.sh                 # 201 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
+Tests/run_all.sh                 # 220 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
 Tools/SimDemo/build_sandbox.sh   # writes Tools/SimDemo/build/BendingLab.html (the 2D reaction lab)
 ```
 

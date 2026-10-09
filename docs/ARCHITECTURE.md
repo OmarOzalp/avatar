@@ -191,8 +191,8 @@ browser build (`Tools/Sandbox3D`, WebAssembly + three.js) and the Unreal build (
 | Kernel piece | What it holds |
 |---|---|
 | `BendingTerrain.h` — `FTerrain` | A heightfield of soil over bedrock (`BedrockDepthCm`, 300 cm). Earthbending is a brush edit (disc, ring or band with a smooth falloff) that **moves soil**: every raise takes its volume from somewhere else, so total soil volume is conserved exactly. The work billed is the change in the soil's potential energy. `RemoveSoil` / `AddSoil` exchange soil with rocks pulled out of or crumbled back into the ground. `Raycast`, `GetHeightAt` and `GetNormalAt` follow the same triangulation the renderers draw (diagonal (x,y)→(x+1,y+1)), so what you see is what you stand on. A dirty rectangle tells renderers which cells changed. |
-| `BendingWaterWhip.h` — `FWaterWhip` | A stream of water simulated as a position-based-dynamics chain of 40 points (550 cm, 20 kg), tapering from 4.6 cm radius at the hand to 2 cm at the tip like a whip. Each segment is an owned Water **capsule volume in the `FSimWorld`**, so the whip boils against fire, soaks soil, shoves rocks and freezes like any other water. The motion follows waterbending's Tai Chi roots, continuous and circular, push and pull. **Holding:** the water circles the bender's chest in a loose loop. **Lash:** the move's startup frames draw the stream back over the shoulder, and its active frames are the snap. A loop rolls down the stream toward the aim in a three-quarter sidearm plane, so the tip travels at twice the loop's speed. After a beat at full reach, the stream flows back, hand first, into the loop. Nothing is held, and lashes chain on the way back. The bender's control is a spring-damper along the intended motion, capped at 450 m/s². Stretch is capped at 8%, so a stream pulled tight stops dead: that is the crack. At the crack the tip flings 8% of its water forward as spray (`ConsumeSpray`), which the owner spawns as a droplet cloud that slows in the air. Freezing extracts `m(cΔT + L_f)` segment by segment from the hand outward. Release hands each parcel to the owner. Per frame: `PreStep` → world step → `PostStep`. |
-| `BendingTechniques.h` | The 14 techniques: element, input slot, Startup / Active / Recovery frames, flat chi and stamina, whether held. `FTechniqueTuning` holds every physical parameter (masses, speeds, temperatures, brush sizes, chi exchange rates). Recipe functions build the matter (`MakeFlame`, `MakeBentAir`, `MakeWaterBall`, `MakeRock`) and the brushes (`EarthWallBrushes`, `RaiseGroundBrushes`, …). |
+| `BendingWaterWhip.h` — `FWaterWhip` | A stream of water simulated as a position-based-dynamics chain of 40 points (550 cm, 20 kg), tapering from 4.6 cm radius at the hand to 2 cm at the tip like a whip. Each segment is an owned Water **capsule volume in the `FSimWorld`**, so the whip boils against fire, soaks soil, shoves rocks and freezes like any other water. The motion follows waterbending's Tai Chi roots, continuous and circular, push and pull. **Holding:** the water circles the bender's chest in a loose loop. **Lash:** the move's startup frames draw the stream back over the shoulder, and its active frames are the snap. A loop rolls down the stream toward the aim in a three-quarter sidearm plane, so the tip travels at twice the loop's speed. After a beat at full reach, the stream flows back, hand first, into the loop. Nothing is held, and lashes chain on the way back. The bender's control is a spring-damper along the intended motion, capped at 450 m/s². Stretch is capped at 8%, so a stream pulled tight stops dead: that is the crack. At the crack the tip flings 8% of its water forward as spray (`ConsumeSpray`), which the owner spawns as a droplet cloud that slows in the air. Freezing extracts `m(cΔT + L_f)` segment by segment from the hand outward. `TakeWater` bends liquid water off the stream tip first (Ice Daggers), leaving at least 30% in each segment. Release hands each parcel to the owner. Per frame: `PreStep` → world step → `PostStep`. |
+| `BendingTechniques.h` | The 20 techniques on five input slots (LMB, RMB, Q, E, and F for each stance's signature move): element, slot, Startup / Active / Recovery frames, flat chi and stamina, whether held. `FTechniqueTuning` holds every physical parameter (masses, speeds, temperatures, brush sizes, chi exchange rates). Recipe functions build the matter (`MakeFlame`, `MakeBentAir`, `MakeWaterBall`, `MakeWaterSpray`, `MakeIceShard`, `MakeRock`), the brushes (`EarthWallBrushes`, `RaiseGroundBrushes`, …) and the energy (`KineticEnergyJ`, `HeatToMakeIce`). |
 | `BendingArena.h` | The training ground: a 96 × 96 m terrain (241² samples, 40 cm cells) with a plaza, hills, two pond basins and a boundary ridge, the prop placements (stones, rocks, boulders, soil clods, dummies, braziers, ice blocks), each prop's physical volume, and the player start. |
 
 ### Unreal sandbox (`Plugins/Bending/.../Sandbox`, `Source/Avatar`)
@@ -238,8 +238,8 @@ builds both WebAssembly modules and checks them against the native results.
   - the whip against fire;
   - freeze and thaw, and partial freezing by mass when short of chi;
   - release, following a sprinting bender, and determinism.
-- **3D sandbox (48 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
-  jumping, every technique, chi, determinism and cost.
+- **3D sandbox (67 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
+  jumping, every technique, water putting out fire, chi, determinism and cost.
 - **WebAssembly parity:** both freestanding wasm builds replay their sessions and must match the native digests exactly.
 
 | Scenario | What happens (measured) |
@@ -262,7 +262,14 @@ builds both WebAssembly modules and checks them against the native results.
 | Freeze | The 20 kg whip freezes for 7.94 MJ (32 chi). |
 | Water Blast | Where it lands on soil, traction drops to 0.35. |
 | Air Blast | A 60 kg dummy is shoved 40 cm. A 600 kg boulder does not move. |
-| Ground Flame | Melts a 40 kg ice block in 20 s; the bender pours in 32.9 MJ. |
+| Ground Flame | Melts a 40 kg ice block in 20 s; the bender pours in 32.9 MJ. Let go, it burns on its own for about 5 s. |
+| Water on fire | Two lashes put out a brazier. One lash puts out a ground flame that was still burning 2.8 s later without it. |
+| Ice Daggers | Five daggers from 2.5 kg of the whip's water; freezing them costs 1047 kJ (`m(cΔT + L_f + c_ice ΔT)`). They strike a dummy and shatter. |
+| Earthquake | Stones near the stomp fly at up to 8 m/s; a dummy 25 m away does not move. |
+| Ring of Fire | Sixteen flames burst out in a ring. |
+| Jet Dash | Carries the bender 6.1 m in 0.5 s. |
+| Air Scooter | 14 m/s while held, back to 5 m/s running after letting go. |
+| Tornado | Lifts a 6 kg stone 7.7 m. A fire blast thrown in puts 0.63 kg of flame in the funnel: a fire tornado. |
 | Cost | A 922-frame scripted session runs at 0.04 ms per frame. |
 
 **Bending Physics Lab.** `Tools/SimDemo/build_sandbox.sh` writes `Tools/SimDemo/build/BendingLab.html`, a single
@@ -273,15 +280,21 @@ self-contained page that embeds the kernel as WebAssembly (about 120 KB). It pro
 
 **Bending Training Ground.** `Tools/Sandbox3D/build_web.sh` writes `Tools/Sandbox3D/build/BendingTrainingGround.html`,
 the 3D sandbox in a browser: the same arena, controls and techniques as the Unreal build. It is where the look is
-developed first, without image files. Everything is procedural:
-- **Lighting:** linear lighting with ACES tone mapping. A sky shader gives the clouds and sun, and its image-based
-  lighting is what glossy surfaces reflect.
-- **Ground:** canvas-generated detail textures, wetness that darkens soil and makes it shiny, and instanced grass that
-  re-seats when the ground is bent.
-- **Water:** the whip is a tube rebuilt every frame through the chain points, with a shader for Fresnel sky reflection,
-  light through the stream, flowing ripples and white water. Droplets and splash rings come from what the simulation
-  reports. Ponds have waves, depth colour, shore foam and ring ripples.
-- **Fire, smoke and steam:** instanced noise sprites emitted from the simulated volumes.
+developed first, without image files. The style is a bright, cel-shaded cartoon, and everything is procedural:
+- **Bender:** a cartoon character built from shapes with ink outlines (inflated back faces), animated by springs
+  toward poses: idle per stance, run, sprint, jump, landing squash, a hop on stance change, and a pose for every
+  technique (wind-up in startup, the strike in active, follow-through in recovery).
+- **Materials:** toon shading with a three-step ramp and a rim light; saturated, readable colours.
+- **Lighting and ground:** ACES tone mapping, a sky with clouds, toon grass and sand, wetness that darkens soil, and
+  instanced grass that re-seats when the ground is bent.
+- **Water:** the whip is a tube rebuilt every frame through the chain points, with toon bands, foam and flowing
+  ripples. Droplets and splash rings come from what the simulation reports. Ponds have waves, shore foam and ring
+  ripples, and a ring on the shore shows where water can be drawn.
+- **Fire, smoke and steam:** instanced sprites with hard-edged cartoon flame bands, stretched along their motion,
+  with embers, scorch marks and camera kick.
+- **Technique effects:** ice crystals with cold-light streaks, a shockwave ring with rocks punching up through the
+  ground, a cel-shaded swirling funnel with whirling debris that turns to flame when fire is fed in, and a spinning
+  ball of air to ride.
 
 `window.trainingGround` exposes a manual clock (`manual`, `step`), input taps and a render-only camera (`view`).
 Automated captures use them to line up frame by frame with the physics.
@@ -324,8 +337,9 @@ This code was written without compiling against the engine. Expect a short round
 What to check first if something looks wrong:
 - **Compile errors** most likely come from engine APIs whose exact signatures could not be checked here: the
   `FCanvasTextItem` and font measuring calls in `AAvatarHUD`, `UInstancedStaticMeshComponent::BatchUpdateInstancesTransforms`,
-  the `FColor` overload of `UProceduralMeshComponent::CreateMeshSection`, and `UInputMappingContext::MapKey` plus
-  its modifiers.
+  the `FColor` overload of `UProceduralMeshComponent::CreateMeshSection`, `UInputMappingContext::MapKey` plus
+  its modifiers, the sphere sweep in `ABendingProjectile::StrikeAlongPath`, and the runtime-created scooter ball
+  (`NewObject<UStaticMeshComponent>` + `RegisterComponent`) in `UBendingTechniqueComponent::SetAirScooter`.
 - **Ground invisible from above** (visible from below): the terrain's triangle winding is reversed for this engine
   version. Reverse the index order in the one `Chunk.Triangles.Append` line in `ABendableTerrain::CreateChunks`.
 - **Everything grey or untinted**: the sandbox tints `/Engine/BasicShapes/BasicShapeMaterial` through its `Color`
