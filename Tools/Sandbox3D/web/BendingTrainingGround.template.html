@@ -946,6 +946,26 @@ function start() {
     scene.add(mesh);
     return mesh;
   });
+  // A glowing ring at the shore of every pond within reach, while a waterbender without water looks for some.
+  const shoreRings = ponds.map((p) => {
+    const ring = new THREE.Mesh(new THREE.RingGeometry((p.r * 0.97) / 100, (p.r * 1.04) / 100, 72).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: lin(0x7fe3ff), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+    ring.position.set(p.x / 100, p.z / 100 + 0.03, -p.y / 100);
+    ring.renderOrder = 3;
+    scene.add(ring);
+    return ring;
+  });
+  const DRAW_RANGE_CM = 1500;
+  // Distance (cm) from the bender's hand to the nearest pond's surface, and that pond.
+  function nearestWater() {
+    let best = Infinity, index = -1;
+    ponds.forEach((p, i) => {
+      const edge = Math.max(0, Math.hypot(P.x - p.x, P.y - p.y) - p.r), dz = P.z + 120 - p.z, d = Math.hypot(edge, dz);
+      if (d < best) { best = d; index = i; }
+    });
+    return { distance: best, pond: index };
+  }
+
   // A ring wave on a pond at a kernel position (cm).
   function addRipple(pond, x, y, strength) {
     const mesh = pondMeshes[pond];
@@ -1104,43 +1124,60 @@ function start() {
     return new THREE.Mesh(geoIco0, stoneMats[0]);
   }
 
-  // ---------------------------------------------------------------- Flame, smoke and steam sprites
-  // Camera-facing quads drawn in one instanced call per system; each particle has a size, heat (or opacity),
-  // random seed and age. Shapes come from animated noise, so no two puffs look alike.
+  // ---------------------------------------------------------------- Flame, smoke, steam and glow sprites
+  // Camera-facing quads drawn in one instanced call per system. Each particle has a size, heat (or opacity), seed,
+  // age, a velocity and a shape (stretch along its motion, aspect). Flames stretch into tongues along the way they
+  // move, so rising fire licks upward and a flying fireball leaves streaks; shapes come from animated noise.
   const SPRITE_VERTEX = `
     attribute vec3 iPos;
-    attribute vec4 iData;
-    uniform float uAspect;
+    attribute vec4 iData;   // size, heat or opacity, seed, age 0..1
+    attribute vec3 iVel;    // world velocity (m/s)
+    attribute vec2 iShape;  // stretch per m/s of screen motion, aspect
     varying vec2 vUv;
     varying vec4 vData;
     void main() {
       vUv = uv;
       vData = iData;
       vec4 mvPosition = modelViewMatrix * vec4(iPos, 1.0);
-      mvPosition.xy += position.xy * iData.x * vec2(1.0, uAspect) + vec2(0.0, iData.x * (uAspect - 1.0) * 0.35);
+      vec2 v = (modelViewMatrix * vec4(iVel, 0.0)).xy;
+      float speed = length(v);
+      vec2 up = speed > 0.05 ? v / speed : vec2(0.0, 1.0);
+      up = normalize(mix(vec2(0.0, 1.0), up, clamp(speed * 0.6, 0.0, 1.0)));
+      vec2 side = vec2(up.y, -up.x);
+      float stretch = iShape.y * (1.0 + min(speed * iShape.x, 3.0));
+      mvPosition.xy += (side * position.x + up * (position.y * stretch + (stretch - 1.0) * 0.3)) * iData.x;
       gl_Position = projectionMatrix * mvPosition;
     }`;
+  // Toon fire: bold bands (pale yellow core, orange, red rim) on a noise-eroded tongue that scrolls upward.
   const FLAME_FRAGMENT = GLSL_NOISE + `
     uniform float uTime;
     varying vec2 vUv;
     varying vec4 vData;
-    vec3 flameRamp(float t) {
-      vec3 c = mix(vec3(0.45, 0.03, 0.005), vec3(1.0, 0.25, 0.03), smoothstep(0.0, 0.35, t));
-      c = mix(c, vec3(1.0, 0.6, 0.15), smoothstep(0.35, 0.72, t));
-      return mix(c, vec3(1.0, 0.86, 0.55), smoothstep(0.75, 1.0, t));
-    }
     void main() {
       vec2 p = vUv * 2.0 - 1.0;
       float age = vData.w, heat = vData.y, seed = vData.z;
-      float n = fbm(vec3(vUv * vec2(2.2, 2.6) + vec2(seed * 11.0, -uTime * 3.0 - seed * 5.0), uTime * 0.9 + seed * 7.0));
-      p.x += n * 0.25 * (p.y + 1.0);
-      p.x *= 1.0 + 1.1 * max(p.y, 0.0);
-      p.y = p.y * 0.75 + 0.15;
-      float r = length(p) + n * 0.45;
-      float body = 1.0 - smoothstep(0.15, 0.85, r);
-      float t = clamp(body * heat * (1.25 - age), 0.0, 1.0);
-      float a = body * (1.0 - age);
-      gl_FragColor = vec4(flameRamp(t) * (0.2 + 0.85 * t) * a, 1.0);
+      float n = fbm(vec3(vUv * vec2(2.1, 2.4) + vec2(seed * 7.0, -uTime * 4.2 - seed * 3.0), uTime * 1.4 + seed * 5.0));
+      vec2 q = vec2(p.x * (1.0 + 1.25 * max(p.y, 0.0)), p.y * 0.82 + 0.18);
+      float shape = length(q) + n * 0.55 * (0.4 + 0.6 * (p.y * 0.5 + 0.5)) + age * 0.35;
+      float edge = 1.0 - smoothstep(0.78, 0.84, shape);
+      if (edge <= 0.01) discard;
+      float t = heat * (1.0 - age * 0.75) * (1.15 - shape);
+      vec3 col = vec3(0.86, 0.12, 0.03);
+      col = mix(col, vec3(1.0, 0.42, 0.04), smoothstep(0.18, 0.22, t));
+      col = mix(col, vec3(1.0, 0.72, 0.12), smoothstep(0.38, 0.42, t));
+      col = mix(col, vec3(1.0, 0.95, 0.62), smoothstep(0.6, 0.64, t));
+      gl_FragColor = vec4(col * 1.6, edge * (1.0 - age * age));
+      #include <tonemapping_fragment>
+      #include <encodings_fragment>
+    }`;
+  // Soft additive halo: the light a fire throws into the air around it.
+  const GLOW_FRAGMENT = `
+    varying vec2 vUv;
+    varying vec4 vData;
+    void main() {
+      float d = length(vUv * 2.0 - 1.0);
+      float a = pow(max(1.0 - d, 0.0), 2.2) * vData.y * (1.0 - vData.w);
+      gl_FragColor = vec4(vec3(1.0, 0.45, 0.12) * a, 1.0);
       #include <tonemapping_fragment>
       #include <encodings_fragment>
     }`;
@@ -1155,10 +1192,12 @@ function start() {
       vec2 p = vUv * 2.0 - 1.0;
       float age = vData.w, seed = vData.z;
       float n = fbm(vec3(vUv * 2.1 + seed * 9.0, uTime * 0.22 + seed * 3.0));
-      float d = length(p) + n * 0.55;
-      float a = (1.0 - smoothstep(0.25, 1.0, d)) * vData.y * sin(3.1416 * clamp(age * 1.05, 0.0, 1.0));
-      float lit = 0.75 + 0.35 * clamp(dot(normalize(vec3(p, 0.6)), uSunDir), 0.0, 1.0) + 0.15 * n;
-      gl_FragColor = vec4(mix(uColorYoung, uColorOld, age) * lit, a);
+      float d = length(p) + n * 0.45;
+      float body = 1.0 - smoothstep(0.62, 0.72, d);
+      float a = body * vData.y * sin(3.1416 * clamp(age * 1.05, 0.0, 1.0));
+      // Two-tone toon shading: lit top, shaded underside.
+      float lit = step(0.0, dot(normalize(vec3(p, 0.7)), normalize(vec3(uSunDir.x, uSunDir.y, 0.5))) + n * 0.3);
+      gl_FragColor = vec4(mix(uColorYoung, uColorOld, age) * mix(0.72, 1.08, lit), a);
       #include <tonemapping_fragment>
       #include <encodings_fragment>
     }`;
@@ -1168,48 +1207,79 @@ function start() {
     geo.index = quad.index;
     geo.setAttribute('position', quad.attributes.position);
     geo.setAttribute('uv', quad.attributes.uv);
-    const iPos = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3).setUsage(THREE.DynamicDrawUsage);
-    const iData = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4).setUsage(THREE.DynamicDrawUsage);
+    const attr = (n) => new THREE.InstancedBufferAttribute(new Float32Array(max * n), n).setUsage(THREE.DynamicDrawUsage);
+    const iPos = attr(3), iData = attr(4), iVel = attr(3), iShape = attr(2);
     geo.setAttribute('iPos', iPos);
     geo.setAttribute('iData', iData);
+    geo.setAttribute('iVel', iVel);
+    geo.setAttribute('iShape', iShape);
     geo.instanceCount = 0;
-    const mat = new THREE.ShaderMaterial({ uniforms: Object.assign({ uTime, uAspect: { value: 1 } }, uniforms || {}), vertexShader: SPRITE_VERTEX, fragmentShader: fragment, transparent: true, depthWrite: false, blending });
+    const mat = new THREE.ShaderMaterial({ uniforms: Object.assign({ uTime }, uniforms || {}), vertexShader: SPRITE_VERTEX, fragmentShader: fragment, transparent: true, depthWrite: false, blending });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 5;
     scene.add(mesh);
-    const P = new Float32Array(max * 3), V = new Float32Array(max * 3), S0 = new Float32Array(max), S1 = new Float32Array(max);
-    const H = new Float32Array(max), SEED = new Float32Array(max), L = new Float32Array(max), ML = new Float32Array(max), RISE = new Float32Array(max), DRAG = new Float32Array(max);
+    const P = new Float32Array(max * 3), V = new Float32Array(max * 3), S0 = new Float32Array(max), S1 = new Float32Array(max), SH = new Float32Array(max * 2);
+    const H = new Float32Array(max), SEED = new Float32Array(max), L = new Float32Array(max), ML = new Float32Array(max), RISE = new Float32Array(max), DRAG = new Float32Array(max), WOB = new Float32Array(max);
     let next = 0;
     return {
-      spawn(x, y, z, vx, vy, vz, size0, size1, heat, life, rise, drag) {
+      // shape: [stretch per m/s, aspect]; wobble: sideways flutter (m/s) for embers.
+      spawn(x, y, z, vx, vy, vz, size0, size1, heat, life, rise, drag, shape, wobble) {
         const i = next; next = (next + 1) % max;
         P[i * 3] = x; P[i * 3 + 1] = y; P[i * 3 + 2] = z; V[i * 3] = vx; V[i * 3 + 1] = vy; V[i * 3 + 2] = vz;
         S0[i] = size0; S1[i] = size1; H[i] = heat; L[i] = ML[i] = life; RISE[i] = rise; DRAG[i] = drag; SEED[i] = Math.random();
+        SH[i * 2] = shape ? shape[0] : 0; SH[i * 2 + 1] = shape ? shape[1] : 1; WOB[i] = wobble || 0;
       },
       step(dt) {
         let n = 0;
-        const ip = iPos.array, id = iData.array;
+        const ip = iPos.array, id = iData.array, iv = iVel.array, is = iShape.array;
+        const t = uTime.value;
         for (let i = 0; i < max; i++) {
           if (L[i] <= 0) continue;
           L[i] -= dt;
           if (L[i] <= 0) continue;
           const k = Math.exp(-DRAG[i] * dt);
           V[i * 3] *= k; V[i * 3 + 1] = V[i * 3 + 1] * k + RISE[i] * dt; V[i * 3 + 2] *= k;
+          if (WOB[i]) { V[i * 3] += Math.sin(t * 9 + SEED[i] * 40) * WOB[i] * dt; V[i * 3 + 2] += Math.cos(t * 7 + SEED[i] * 30) * WOB[i] * dt; }
           P[i * 3] += V[i * 3] * dt; P[i * 3 + 1] += V[i * 3 + 1] * dt; P[i * 3 + 2] += V[i * 3 + 2] * dt;
           const age = 1 - L[i] / ML[i];
           ip[n * 3] = P[i * 3]; ip[n * 3 + 1] = P[i * 3 + 1]; ip[n * 3 + 2] = P[i * 3 + 2];
+          iv[n * 3] = V[i * 3]; iv[n * 3 + 1] = V[i * 3 + 1]; iv[n * 3 + 2] = V[i * 3 + 2];
           id[n * 4] = S0[i] + (S1[i] - S0[i]) * age; id[n * 4 + 1] = H[i]; id[n * 4 + 2] = SEED[i]; id[n * 4 + 3] = age;
+          is[n * 2] = SH[i * 2]; is[n * 2 + 1] = SH[i * 2 + 1];
           n++;
         }
         geo.instanceCount = n;
-        iPos.needsUpdate = true; iData.needsUpdate = true;
+        iPos.needsUpdate = iData.needsUpdate = iVel.needsUpdate = iShape.needsUpdate = true;
       },
     };
   }
-  const flames = spriteSystem(700, FLAME_FRAGMENT, THREE.AdditiveBlending, { uAspect: { value: 1.7 } });
-  const smoke = spriteSystem(260, PUFF_FRAGMENT, THREE.NormalBlending, { uColorYoung: { value: lin(0x5a554f) }, uColorOld: { value: lin(0xb2aea8) }, uSunDir });
-  const steamPuffs = spriteSystem(320, PUFF_FRAGMENT, THREE.NormalBlending, { uColorYoung: { value: lin(0xf4f7f9) }, uColorOld: { value: lin(0xdfe6ea) }, uSunDir });
+  const FLAME_SHAPE = [0.25, 1.55], CORE_SHAPE = [0.0, 1.0], EMBER_SHAPE = [0.9, 1.0];
+  const flames = spriteSystem(900, FLAME_FRAGMENT, THREE.NormalBlending);
+  const glows = spriteSystem(120, GLOW_FRAGMENT, THREE.AdditiveBlending);
+  const sparks = spriteSystem(400, FLAME_FRAGMENT, THREE.AdditiveBlending);
+  const smoke = spriteSystem(260, PUFF_FRAGMENT, THREE.NormalBlending, { uColorYoung: { value: lin(0x6a625a) }, uColorOld: { value: lin(0xb8b2aa) }, uSunDir });
+  const steamPuffs = spriteSystem(320, PUFF_FRAGMENT, THREE.NormalBlending, { uColorYoung: { value: lin(0xf6f9fb) }, uColorOld: { value: lin(0xe2eaee) }, uSunDir });
+  // Scorch marks where fire lands: dark discs that fade.
+  const SCORCH = 40;
+  const scorchMesh = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false }), SCORCH);
+  scorchMesh.frustumCulled = false;
+  scorchMesh.renderOrder = 1;
+  const scorchState = [];
+  for (let i = 0; i < SCORCH; i++) { scorchState.push({ life: 0 }); scorchMesh.setMatrixAt(i, tmpM.compose(tmpV.set(0, -999, 0), tmpQ.identity(), ZERO_SCALE)); }
+  scene.add(scorchMesh);
+  let scorchNext = 0;
+  function scorch(x, z, size) {
+    const i = scorchNext; scorchNext = (scorchNext + 1) % SCORCH;
+    const y = heightAt(x * 100, -z * 100) / 100 + 0.015;
+    scorchState[i].life = 1;
+    tmpQ.setFromAxisAngle(UP, Math.random() * 6.28);
+    scorchMesh.setMatrixAt(i, tmpM.compose(tmpV.set(x, y, z), tmpQ, tmpS.set(size, 1, size * (0.7 + Math.random() * 0.3))));
+    scorchMesh.instanceMatrix.needsUpdate = true;
+  }
+  let shake = 0;
+  // A short camera shake, for launches and impacts.
+  const kick = (amount) => { shake = Math.min(1, shake + amount); };
   const fireLights = [];
   for (let i = 0; i < 4; i++) { const l = new THREE.PointLight(lin(0xff8a3c), 0, 11, 2); scene.add(l); fireLights.push(l); }
 
@@ -2086,8 +2156,11 @@ function start() {
     stepParticles(dt);
     stepDrops(dt);
     flames.step(dt);
+    glows.step(dt);
+    sparks.step(dt);
     smoke.step(dt);
     steamPuffs.step(dt);
+    shake *= Math.exp(-dt * 7);
     updateDecor();
     wadeRipples(dt);
     stepFloats(dt);
@@ -2128,6 +2201,7 @@ function start() {
       toThree(camPos.x, camPos.y, camPos.z, camera.position);
       toThree(camPos.x + camDir.x * 100, camPos.y + camDir.y * 100, camPos.z + camDir.z * 100, tmpV);
       camera.lookAt(tmpV);
+      if (shake > 0.002) camera.position.add(tmpV.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(shake * 0.14));
     }
     renderer.render(scene, camera);
   }
@@ -2213,6 +2287,7 @@ function start() {
 
   const VSTRIDE = 18;
   const fireSpots = [];
+  const fireMemo = new Map(), liveFires = new Set();
   const sprayAges = new Map();
   const rnd = () => Math.random() - 0.5;
   function updateVolumes(t, dt) {
@@ -2229,22 +2304,63 @@ function start() {
       const vx = v[o + 8] / 100, vy = v[o + 10] / 100, vz = -v[o + 9] / 100;
       const speed = Math.hypot(vx, vy, vz);
       if (sub === SUB.FIRE) {
-        // Flame tongues rise off the volume and trail behind it when it flies; embers and smoke above slow flames.
         const temp = v[o + 6];
-        const heat = Math.min(1, Math.max(0.15, (temp - 650) / 1500));
-        const n = Math.min(6, (1 + r * 3) * rate);
-        const whole = Math.floor(n) + (Math.random() < n % 1 ? 1 : 0);
-        for (let i = 0; i < whole; i++) {
-          flames.spawn(tmpV.x + rnd() * r, tmpV.y + rnd() * r * 0.6 - r * 0.3, tmpV.z + rnd() * r,
-            vx * 0.75 + rnd() * 0.4, vy * 0.75 + 0.7 + Math.random() * 1.1, vz * 0.75 + rnd() * 0.4,
-            r * (0.6 + Math.random() * 0.5), r * 0.2, heat * (0.7 + Math.random() * 0.4), 0.32 + Math.random() * 0.3, 2.2, 1.4);
+        const heat = Math.min(1, Math.max(0.2, (temp - 650) / 1400));
+        const flicker = 0.85 + 0.15 * Math.sin(t * 23 + k) * Math.sin(t * 9.7 + k * 3);
+        const moving = speed > 3;
+        let fromX = tmpV.x, fromY = tmpV.y, fromZ = tmpV.z;
+        if (owner === 3) {
+          // Per-projectile memory: where it was last frame (to fill the trail), and whether it has landed.
+          let memo = fireMemo.get(slot);
+          if (!memo || age < memo.age) {
+            memo = { x: tmpV.x, y: tmpV.y, z: tmpV.z, age, landed: false };
+            fireMemo.set(slot, memo);
+            if (kind === PROJ.FIRE) {
+              // Launch flash.
+              glows.spawn(tmpV.x, tmpV.y, tmpV.z, 0, 0, 0, r * 3, r * 4.5, 1.2, 0.18, 0, 0);
+              for (let i = 0; i < 10; i++) sparks.spawn(tmpV.x, tmpV.y, tmpV.z, vx * 0.4 + rnd() * 4, vy * 0.4 + rnd() * 4, vz * 0.4 + rnd() * 4, 0.05, 0.015, 1, 0.35 + Math.random() * 0.3, 0, 2.5, EMBER_SHAPE);
+              kick(0.12);
+            }
+          }
+          fromX = memo.x; fromY = memo.y; fromZ = memo.z;
+          const landed = v[o + 15] > 0;
+          if (landed && !memo.landed && kind === PROJ.FIRE) {
+            // Splash of flame on landing: sparks, a scorch mark, a little shake.
+            scorch(tmpV.x, tmpV.z, r * 1.5);
+            for (let i = 0; i < 18; i++) sparks.spawn(tmpV.x, tmpV.y, tmpV.z, rnd() * 6, 1 + Math.random() * 4, rnd() * 6, 0.06, 0.015, 1, 0.4 + Math.random() * 0.4, -3, 1.5, EMBER_SHAPE);
+            kick(0.2);
+          }
+          memo.landed = landed; memo.x = tmpV.x; memo.y = tmpV.y; memo.z = tmpV.z; memo.age = age;
+          liveFires.add(slot);
         }
-        if (Math.random() < 0.35 * rate) {
-          flames.spawn(tmpV.x + rnd() * r, tmpV.y + rnd() * r * 0.5, tmpV.z + rnd() * r, vx * 0.5 + rnd() * 1.4, vy * 0.5 + 1 + Math.random() * 2, vz * 0.5 + rnd() * 1.4,
-            0.035 + Math.random() * 0.03, 0.01, 1.0, 0.9 + Math.random() * 0.9, 0.6, 0.7);
+        // Halo of light around every fire.
+        glows.spawn(tmpV.x, tmpV.y, tmpV.z, 0, 0, 0, r * 3.6 * flicker, r * 3.6 * flicker, 0.42 * heat, 0.034, 0, 0);
+        if (moving) {
+          // A fireball: a white-hot swirling core and a trail of tongues laid along its path since last frame.
+          flames.spawn(tmpV.x, tmpV.y, tmpV.z, vx * 0.2, vy * 0.2, vz * 0.2, r * 0.95 * flicker, r * 0.85, 1.0, 0.05, 0, 0, CORE_SHAPE);
+          const n = Math.min(10, (3 + r * 6) * rate);
+          for (let i = 0; i < n; i++) {
+            const f = Math.random();
+            flames.spawn(fromX + (tmpV.x - fromX) * f + rnd() * r * 0.7, fromY + (tmpV.y - fromY) * f + rnd() * r * 0.7, fromZ + (tmpV.z - fromZ) * f + rnd() * r * 0.7,
+              vx * 0.45 + rnd(), vy * 0.45 + 0.6 + Math.random(), vz * 0.45 + rnd(),
+              r * (0.55 + Math.random() * 0.4), r * 0.1, heat * (0.75 + Math.random() * 0.3), 0.22 + Math.random() * 0.22, 2.6, 2.5, FLAME_SHAPE);
+          }
+        } else {
+          // A standing fire: tongues licking up from its base.
+          const n = Math.min(6, (1.2 + r * 3) * rate);
+          const whole = Math.floor(n) + (Math.random() < n % 1 ? 1 : 0);
+          for (let i = 0; i < whole; i++) {
+            flames.spawn(tmpV.x + rnd() * r * 0.9, tmpV.y - r * 0.35 + rnd() * r * 0.3, tmpV.z + rnd() * r * 0.9,
+              rnd() * 0.5, 1.1 + Math.random() * 1.2, rnd() * 0.5,
+              r * (0.55 + Math.random() * 0.45), r * 0.1, heat * (0.8 + Math.random() * 0.3), 0.45 + Math.random() * 0.3, 2.2, 1.2, FLAME_SHAPE);
+          }
+          if (Math.random() < 0.3 * rate) {
+            smoke.spawn(tmpV.x + rnd() * r * 0.4, tmpV.y + r * 1.4, tmpV.z + rnd() * r * 0.4, rnd() * 0.3, 0.6 + Math.random() * 0.4, rnd() * 0.3, r * 0.45, r * 2.2, 0.32, 2 + Math.random(), 0.12, 0.35);
+          }
         }
-        if (speed < 1.5 && Math.random() < 0.3 * rate) {
-          smoke.spawn(tmpV.x + rnd() * r * 0.4, tmpV.y + r * 1.2, tmpV.z + rnd() * r * 0.4, rnd() * 0.3, 0.5 + Math.random() * 0.4, rnd() * 0.3, r * 0.5, r * 2.4, 0.2, 2.2 + Math.random(), 0.12, 0.35);
+        if (Math.random() < 0.45 * rate) {
+          sparks.spawn(tmpV.x + rnd() * r, tmpV.y + rnd() * r * 0.5, tmpV.z + rnd() * r, vx * 0.4 + rnd() * 1.2, vy * 0.4 + 1.2 + Math.random() * 2, vz * 0.4 + rnd() * 1.2,
+            0.045, 0.012, 1.0, 0.9 + Math.random() * 0.9, 0.7, 0.7, EMBER_SHAPE, 3);
         }
         fireSpots.push({ p: tmpV.clone(), power: v[o + 7] * temp });
       } else if (sub === SUB.STEAM && owner === 0) {
@@ -2284,6 +2400,8 @@ function start() {
       }
     }
     for (const slot of sprayAges.keys()) if (!liveSprays.has(slot)) sprayAges.delete(slot);
+    for (const slot of fireMemo.keys()) if (!liveFires.has(slot)) fireMemo.delete(slot);
+    liveFires.clear();
     hideFrom(pools.air, na); hideFrom(pools.ring, na); hideFrom(pools.water, nw);
     fireSpots.sort((a, b) => a.p.distanceToSquared(camera.position) - b.p.distanceToSquared(camera.position));
     fireLights.forEach((light, i) => {
@@ -2431,7 +2549,8 @@ function start() {
           break;
         case 'Extinguished':
           for (let i = 0; i < 6; i++) smoke.spawn(x + rnd() * 0.3, y + rnd() * 0.3, z + rnd() * 0.3, rnd() * 0.5, 0.5 + Math.random() * 0.5, rnd() * 0.5, 0.3, 1.2, 0.6, 2 + Math.random(), 0.15, 0.5);
-          for (let i = 0; i < 10; i++) flames.spawn(x, y, z, rnd() * 3, 1 + Math.random() * 2, rnd() * 3, 0.04, 0.01, 1, 0.7 + Math.random() * 0.6, -2, 0.5);
+          for (let i = 0; i < 6; i++) steamPuffs.spawn(x + rnd() * 0.3, y + rnd() * 0.3, z + rnd() * 0.3, rnd() * 0.6, 0.8 + Math.random() * 0.6, rnd() * 0.6, 0.25, 1.1, 0.7, 1.4 + Math.random() * 0.6, 0.2, 0.6);
+          for (let i = 0; i < 14; i++) sparks.spawn(x, y, z, rnd() * 4, 1 + Math.random() * 3, rnd() * 4, 0.05, 0.012, 1, 0.5 + Math.random() * 0.5, -2.5, 1.2, EMBER_SHAPE);
           floatLabel('Extinguished', x, y + 1.1, z, 'out' + Math.round(x));
           break;
         case 'MudFormed':
@@ -2477,6 +2596,12 @@ function start() {
 
     const lines = [];
     if (player[36] > 0) lines.push(`<span class="on">Whip: ${player[37].toFixed(1)} kg${player[38] > 0 ? ', frozen' : ''}</span>`);
+    // Waterbenders need a source: say where the nearest water is, and light up ponds in reach.
+    const looking = element === 2 && !(player[36] > 0);
+    const water = nearestWater();
+    const inReach = water.distance <= DRAW_RANGE_CM;
+    if (looking) lines.push(inReach ? `<span class="on">Water in reach (${(water.distance / 100).toFixed(0)} m): left-click to draw</span>` : `<span class="warn">No water in reach: nearest pond ${(water.distance / 100).toFixed(0)} m away (15 m needed)</span>`);
+    shoreRings.forEach((ring, i) => { ring.material.opacity = looking && inReach && i === water.pond ? 0.18 + 0.12 * Math.sin(uTime.value * 4) : 0; });
     if (player[17] < 0.95) lines.push(`<span class="warn">Mud underfoot: traction ${player[17].toFixed(2)}</span>`);
     lines.push(`Work done: ${(player[28] / 1000).toFixed(0)} kJ motion · ${(player[27] / 1e6).toFixed(1)} MJ heat`);
     const status = lines.join('<br>');

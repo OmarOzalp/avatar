@@ -183,6 +183,12 @@ void ABendingProjectile::MakeSpray(double DragTimeS)
 	Mesh->SetCastShadow(false);
 }
 
+void ABendingProjectile::SetFuel(double InFuelJ, double PowerW)
+{
+	FuelJ = FMath::Max(InFuelJ, 0.0);
+	FuelPowerW = FMath::Max(PowerW, 0.0);
+}
+
 double ABendingProjectile::GetGroundHeight(const FVector& LocationCm) const
 {
 	const ABendingSandboxArena* ArenaActor = Arena.Get();
@@ -210,6 +216,13 @@ void ABendingProjectile::Tick(float DeltaSeconds)
 	{
 		VelocityCmS = FVector::ZeroVector;
 		Location.Z = GetGroundHeight(Location) + GroundedFlameLift * State.RadiusCm;
+		if (FuelJ > 0.0)
+		{
+			// It burns what it lit until that runs out.
+			const double BurnJ = FMath::Min(FuelJ, FuelPowerW * DeltaSeconds);
+			AddHeat(BurnJ);
+			FuelJ -= BurnJ;
+		}
 	}
 	else
 	{

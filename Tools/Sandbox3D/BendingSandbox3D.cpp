@@ -922,6 +922,7 @@ namespace BendingSandbox3D
 			if (Technique == ETechnique::GroundFlame && HoldProjectile >= 0)
 			{
 				Projectiles[HoldProjectile].SustainPowerW = 0.0;
+				Projectiles[HoldProjectile].FuelJ = Tuning.GroundFlameFuelJ;
 			}
 			if ((Technique == ETechnique::RaiseGround || Technique == ETechnique::LowerGround) && EarthWorkMovedKg > 0.0)
 			{
@@ -1444,6 +1445,13 @@ namespace BendingSandbox3D
 				if (Projectile.SustainPowerW > 0.0)
 				{
 					World.TransferHeat(Projectile.Volume, Projectile.SustainPowerW * Dt);
+				}
+				else if (Projectile.FuelJ > 0.0)
+				{
+					// Released, it burns what it lit until that runs out; water still puts it out at once.
+					const double Burn = KMin(Projectile.FuelJ, Tuning.GroundFlameFuelPowerW * Dt);
+					World.TransferHeat(Projectile.Volume, Burn);
+					Projectile.FuelJ -= Burn;
 				}
 				break;
 

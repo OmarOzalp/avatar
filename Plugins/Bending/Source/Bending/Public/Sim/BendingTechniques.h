@@ -126,6 +126,9 @@ namespace BendingSim
 		double GroundFlameTemperatureK = 1300.0;
 		/** Heat a bender pours into a ground flame while holding it (W). */
 		double GroundFlamePowerW = 1.5e6;
+		/** Once released, a ground flame burns the ground it lit: this much heat (J) at GroundFlameFuelPowerW (W). */
+		double GroundFlameFuelJ = 1.6e6;
+		double GroundFlameFuelPowerW = 3.5e5;
 
 		// ---------------------------------------------------------------- Air
 		double AirBlastRadiusCm = 100.0;

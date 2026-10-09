@@ -96,6 +96,8 @@ namespace BendingSandbox3D
 		double AgeS = 0.0;
 		/** Heat a bender pours in (W) while holding a ground flame. */
 		double SustainPowerW = 0.0;
+		/** A released ground flame's fuel (J): the ground it lit, burning on its own. */
+		double FuelJ = 0.0;
 		bool bLanded = false;
 		bool bAlive = false;
 	};

@@ -56,6 +56,9 @@ public:
 	/** Water as spray: it loses its speed to the air over DragTimeS and draws no ball (the whip draws its droplets). */
 	void MakeSpray(double DragTimeS);
 
+	/** A released ground flame burns the ground it lit: FuelJ of heat at PowerW, unless water puts it out first. */
+	void SetFuel(double FuelJ, double PowerW);
+
 	EBendingProjectileKind GetKind() const { return Kind; }
 	bool IsGrounded() const { return bGrounded; }
 
@@ -108,6 +111,9 @@ private:
 	float LastColorTemperatureK = 0.f;
 	/** Spray only: time for air drag to take most of its speed (s); 0 = no drag. */
 	double SprayDragTimeS = 0.0;
+	/** Released ground flame: heat left to burn (J) and the rate it burns at (W). */
+	double FuelJ = 0.0;
+	double FuelPowerW = 0.0;
 	bool bGrounded = false;
 	bool bWithFlameLight = false;
 	bool bInitialized = false;

@@ -774,10 +774,12 @@ void UBendingTechniqueComponent::EndHold(const FTechniqueHold& Hold)
 		break;
 
 	case EBendingTechnique::GroundFlame:
-		// No longer fed, the flame cools and goes out on its own.
+		// No longer fed by the bender, the flame burns the ground it lit, then cools and goes out on its own.
 		if (ABendingProjectile* Flame = Hold.Flame.Get())
 		{
-			Flame->KeepAlive(GetTuning().ProjectileLifetimeS);
+			const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+			Flame->SetFuel(Tuning.GroundFlameFuelJ, Tuning.GroundFlameFuelPowerW);
+			Flame->KeepAlive(Tuning.ProjectileLifetimeS + Tuning.GroundFlameFuelJ / FMath::Max(Tuning.GroundFlameFuelPowerW, 1.0));
 		}
 		break;
 
@@ -924,6 +926,21 @@ FString UBendingTechniqueComponent::GetStatusText() const
 	if (Walls.Num() > 0)
 	{
 		Parts.Add(TEXT("Wall rising"));
+	}
+	// A waterbender needs a source: say how far the nearest water is.
+	const UBendingComponent* Bending = GetBendingComponent();
+	const ABendingSandboxArena* Arena = GetArena();
+	if (!Whip.IsValid() && Bending && Arena && Bending->GetActiveElement() == EBendingElement::Water)
+	{
+		BendingSim::FVec3 Source;
+		if (BendingSim::FindWaterSource(Arena->GetLayout(), BendingUnits::ToSim(GetHandLocation()), UE_BIG_NUMBER, Source) >= 0)
+		{
+			const double DistanceM = BendingUnits::CmToM(FVector::Dist(GetHandLocation(), BendingUnits::ToEngine(Source)));
+			const double RangeM = BendingUnits::CmToM(GetTuning().WhipDrawRangeCm);
+			Parts.Add(DistanceM <= RangeM
+				? FString::Printf(TEXT("Water in reach (%.0f m): left-click to draw"), DistanceM)
+				: FString::Printf(TEXT("No water in reach: nearest pond %.0f m away (%.0f m needed)"), DistanceM, RangeM));
+		}
 	}
 	return FString::Join(Parts, TEXT("   |   "));
 }

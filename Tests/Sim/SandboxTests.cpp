@@ -311,6 +311,53 @@ namespace
 		ExpectTrue("a fire blast relights it", GSandbox.Bodies[Brazier].bLit);
 	}
 
+	int CountGroundFlames()
+	{
+		int Count = 0;
+		for (int Index = 0; Index < FSandbox::MaxProjectiles; ++Index)
+		{
+			Count += GSandbox.Projectiles[Index].bAlive && GSandbox.Projectiles[Index].Kind == EProjectileKind::GroundFlame ? 1 : 0;
+		}
+		return Count;
+	}
+
+	/** Draws a whip at the near pond, then lights a ground flame 3.5 m away; true when both are there. */
+	bool SetUpWhipAndFlame(const FVec3& Spot)
+	{
+		GSandbox.Init();
+		Teleport(700.0, 450.0, 90.0);
+		SetStance(ETechniqueElement::Water);
+		Press(ETechniqueSlot::Primary, Ground(700.0, -400.0), 1.2);
+		SetStance(ETechniqueElement::Fire);
+		Hold(ETechniqueSlot::Utility, Spot, 0.6);
+		SetStance(ETechniqueElement::Water);
+		return GSandbox.Whip.IsActive() && CountGroundFlames() > 0;
+	}
+
+	void WaterPutsOutFire()
+	{
+		SimTest::Section("Water puts out fire");
+		const FVec3 Spot = Ground(700.0, 100.0);
+		const FVec3 Target = Spot + FVec3(0.0, 0.0, 40.0);
+
+		// Left alone, the flame keeps burning for a while.
+		ExpectTrue("a whip drawn and a ground flame lit", SetUpWhipAndFlame(Spot));
+		Run(LookAt(Target), 2.8);
+		const bool bBurnsAlone = CountGroundFlames() > 0;
+		ExpectTrue("left alone, the flame is still burning after 2.8 s", bBurnsAlone);
+
+		// Lashed, it goes out.
+		SetUpWhipAndFlame(Spot);
+		int Lashes = 0;
+		while (Lashes < 4 && CountGroundFlames() > 0)
+		{
+			Press(ETechniqueSlot::Primary, Target, 0.7);
+			++Lashes;
+		}
+		std::printf("    the whip put a ground flame out in %d lash%s (2.8 s alone did not)\n", Lashes, Lashes == 1 ? "" : "es");
+		ExpectTrue("lashing the flame puts it out", CountGroundFlames() == 0);
+	}
+
 	void FreezeCostsLatentHeat()
 	{
 		SimTest::Section("Freeze the whip");
@@ -477,6 +524,7 @@ int main(int ArgCount, char** Args)
 	TerraformRaisesAndDigs();
 	WhipFromThePond();
 	WhipPutsOutABrazierFireRelightsIt();
+	WaterPutsOutFire();
 	FreezeCostsLatentHeat();
 	WaterBlastMakesMud();
 	AirThrowsDummiesNotBoulders();
