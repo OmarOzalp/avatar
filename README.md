@@ -14,7 +14,8 @@ dummies, braziers and blocks of ice, and bend all four elements with five techni
 the water whip is a simulated stream of water, water puts out fire, and everything you throw interacts through the
 same physics kernel. The field reacts: banners, straw, crates and dummies burn (and fire spreads between them),
 lanterns light, crates smash and water barrels burst, and training dummies take damage, get knocked out and stand up
-again. Eight training goals walk a new player through it.
+again. A firebender waits in the ring to spar: hit them and they bow and fight back, with blasts you can guard
+against or parry straight back at them. Ten training goals walk a new player through it.
 
 ### In Unreal Engine 5.8
 
@@ -30,7 +31,7 @@ There are no assets to create. The project starts on an empty engine map, and `A
 from code when the level starts: the terrain, ponds, props and lighting. The character, props and effects are made of
 engine basic shapes, and the HUD is drawn on the canvas. It plays the same techniques as the browser build, but it
 looks much plainer: the cartoon look, shaders and particle effects exist only in the browser build so far. The
-interactive field and dummy health work in both.
+interactive field and dummy health work in both; the sparring partner, guard and parry are browser-only for now.
 
 > The Unreal code has not been compiled yet: the environment it was written in has no engine. Expect a short round
 > of fixes on the first build. See [First build](docs/ARCHITECTURE.md#first-build) for the parts most likely to need them.
@@ -47,8 +48,10 @@ where the look is developed first. It is a bright, cel-shaded cartoon:
   squash on landing, a hop when you switch stance. Switching stance changes into that nation's clothes: a Water
   Tribe parka with fur trim, Earth Kingdom green and tan, Fire Nation red and gold with shoulder guards, or Air Nomad
   robes with the blue arrow.
-- **Fights:** damage numbers, health bars, a hit flash, hit-stop and camera kick on heavy blows, a combo counter and
-  K.O. callouts.
+- **Fights:** a sparring partner in Fire Nation red who bows, circles, winds up (a glowing fist), throws blasts,
+  combos and rings of fire, guards behind a shield of flame, sidesteps, staggers and topples; your guard is a shield
+  in your element, and a parry flashes and rings. Damage numbers, health bars, a hit flash, hit-stop and camera kick
+  on heavy blows, a combo counter, a duel scoreboard and K.O. callouts.
 - **Arena:** toon grass and a sand arena ringed by stone, banners in the four elements' colours, lanterns, trees and
   a sky with drifting clouds.
 - **Water:** a glossy, rippling whip with foam, droplets and splashes; ponds with waves and ripples, and a ring on the
@@ -73,6 +76,7 @@ shapes; its materials and Niagara effects come next.
 | Space | Jump |
 | 1 2 3 4 | Water, Earth, Fire, Air stance |
 | Left mouse, right mouse, Q, E, F | The stance's techniques (below); F is its signature move |
+| C (hold) | Guard: blocks most of a blast for stamina; raised just as a blast arrives, it parries it back |
 | H | Show or hide the controls panel |
 | M | Sound on or off (browser) |
 
@@ -83,10 +87,11 @@ shapes; its materials and Niagara effects come next.
 | **3 Fire** | Fire Blast | Flame Stream (hold) | Jet Dash: fire from your feet launches you forward | Ground Flame (hold) | Ring of Fire: a spin kick bursts flame out in every direction |
 | **4 Air** | Air Blast | Gust (hold) | Air Scooter (hold): ride a spinning ball of air at 14 m/s | Air Jump | Tornado: spin one up at the aim; it pulls things in and lifts them |
 
-The HUD shows chi and stamina, the current move's Startup / Active / Recovery frames with the cancel window, what
+The HUD shows health, chi and stamina, the current move's Startup / Active / Recovery frames with the cancel window, what
 each technique did and what it cost, and every reaction between elements as it happens.
 
 **Things to try**
+- Hit the firebender waiting in the ring (any technique) to start a duel. Strike while they wind up or recover; hold C to guard, and tap it just as a blast arrives to send it back. Hide behind an earth wall: they have to work round it.
 - Water only comes from a pond: walk within 15 m (the HUD and a ring on the shore tell you), then left-click.
 - Lash a lit brazier: the stream and the spray flung off its tip boil to steam, and two lashes put the fire out. Hit the brazier with fire to relight it.
 - Light a ground flame (Fire, hold E), then lash it once with water: it goes out.
@@ -140,7 +145,7 @@ docs/ROADMAP.md              Where the demo stands, what comes next, and what yo
 The physics kernel builds and runs without the engine (clang++ and Node 18+):
 
 ```
-Tests/run_all.sh                 # 247 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
+Tests/run_all.sh                 # 272 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
 Tools/SimDemo/build_sandbox.sh   # writes Tools/SimDemo/build/BendingLab.html (the 2D reaction lab)
 ```
 

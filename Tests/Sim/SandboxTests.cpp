@@ -879,6 +879,7 @@ namespace
 		ChallengeRival();
 		SetStance(ETechniqueElement::Air);
 		int Blasts = 0;
+		int Mixed = 0;
 		for (int Frame = 0; Frame < 60 * 40 && GSandbox.Rival.State != ERivalState::Down; ++Frame)
 		{
 			FInput Input = LookAt(RivalChest());
@@ -886,7 +887,14 @@ namespace
 			Input.bSlotHeld[0] = Frame % 30 == 0;
 			Blasts += Input.bSlotHeld[0] ? 1 : 0;
 			GSandbox.Advance(Input, Dt);
+			for (int Event = 0; Event < GSandbox.NumFrameEvents; ++Event)
+			{
+				const FSandboxEvent& E = GSandbox.FrameEvents[Event];
+				Mixed += E.Type != EReactionType::None && E.Effect != ESandboxEffect::None ? 1 : 0;
+				Mixed += E.Effect == ESandboxEffect::Hit && E.EnergyJ > FSandbox::RivalBlowCap + 1e-9 ? 1 : 0;
+			}
 		}
+		ExpectTrue("every event is a reaction or an effect, never both (no ghost hits)", Mixed == 0);
 		std::printf("    knocked out with %d air blasts\n", Blasts);
 		ExpectTrue("air blasts knock the sparring partner out", GSandbox.Rival.State == ERivalState::Down && GSandbox.Rival.PlayerWins == 1);
 		ExpectTrue("you win the duel", HasMessage("You win the duel"));

@@ -495,7 +495,7 @@ namespace BendingSandbox3D
 		void RivalBurst();
 		void StartDuel();
 		void EndDuel(int Winner);
-		void HurtPlayer(double Damage, const FVec3& Direction, double KnockbackCmS);
+		void HurtPlayer(double Damage, const FVec3& Direction, double KnockbackCmS, bool bBlocked = false);
 		/** 0..1, deterministic. */
 		double RivalRandom();
 		FVec3 GetRivalFeetCm() const;

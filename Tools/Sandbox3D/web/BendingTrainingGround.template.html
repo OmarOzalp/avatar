@@ -25,6 +25,7 @@
   --recovery: #5d6b70;
   --chi: #7fd1c4;
   --stamina: #d9c27a;
+  --hp: linear-gradient(90deg, #e2463a, #ff8a4c 70%, #ffc65c);
   --stance: var(--water);
   --font-display: "Lilita One", "Arial Rounded MT Bold", "Bai Jamjuree", system-ui, sans-serif;
   --font-ui: "Nunito", "Bai Jamjuree", "Segoe UI", system-ui, sans-serif;
@@ -89,6 +90,23 @@ body {
 .float.dmg.big { color: #ffb347; font-size: 26px; }
 .float.dmg.huge { color: #ff6a3d; font-size: 34px; }
 .float.ko { color: #ffe066; font-size: 30px; }
+.float.hurt { color: #ff6a5a; font-size: 24px; }
+.float.block { color: #cfe8ff; font-size: 16px; }
+.float.parry { color: #9ff3ff; font-size: 34px; }
+.float.duel { color: #ffd84a; font-size: 40px; }
+.float.win { color: #8af07a; font-size: 38px; }
+.float.lose { color: #ff8a7a; font-size: 32px; }
+.hpbar.rival { width: 96px; margin-left: -48px; height: 9px; }
+.hpbar.rival i { background: linear-gradient(90deg, #e2463a, #ff8a4c 70%, #ffc65c); }
+#rival-tag { position: absolute; opacity: 0; transform: translate(-50%, -100%); padding: 4px 10px; border-radius: 10px; background: rgba(13, 18, 20, 0.72);
+  font-size: 12px; color: var(--text); white-space: nowrap; pointer-events: none; transition: opacity 0.3s; box-shadow: 0 0 0 1px rgba(236, 91, 60, 0.5); }
+#rival-tag b { color: #ff9a6a; font-weight: 700; }
+#duel { top: 14px; left: 50%; transform: translateX(-50%); padding: 8px 16px 10px; text-align: center; min-width: 240px; transition: opacity 0.3s; }
+#duel .label { display: block; color: #ff9a6a; letter-spacing: 0.08em; }
+#duel .score { display: flex; justify-content: center; align-items: baseline; gap: 12px; font-family: var(--font-display); font-size: 26px; line-height: 1.1; }
+#duel .score span { font-family: var(--font-ui); font-size: 12px; color: var(--muted); }
+#duel .bar { margin-top: 6px; height: 8px; }
+#hurt { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(200, 30, 20, 0.55) 100%); }
 .hpbar { position: absolute; width: 64px; height: 8px; margin-left: -32px; border-radius: 4px; background: rgba(20, 14, 10, 0.75); box-shadow: 0 0 0 2px rgba(20, 14, 10, 0.75); overflow: hidden; pointer-events: none; transition: opacity 0.3s; }
 .hpbar i { position: absolute; inset: 0; transform-origin: left; background: linear-gradient(90deg, #ff5a3c, #ffd84a 60%, #8ae65a); }
 .hpbar b { position: absolute; inset: 0; transform-origin: left; background: rgba(255, 255, 255, 0.85); }
@@ -366,6 +384,7 @@ body {
 }
 </style>
 
+<div id="hurt" aria-hidden="true"></div>
 <canvas id="world" aria-label="3D training ground: a cartoon bender on a grassy field with ponds, braziers, ice blocks, training dummies and rocks"></canvas>
 
 <div id="hud" aria-live="polite">
@@ -375,12 +394,18 @@ body {
     <div id="goals" aria-label="Training goals"></div>
   </div>
   <div id="combo" aria-hidden="true"><div class="count">x2</div><div class="label">COMBO</div></div>
+  <div id="duel" class="panel" hidden><span class="label">Sparring duel</span><div class="score"><b id="duel-you">0</b><span>you · partner</span><b id="duel-them">0</b></div><div class="bar"><i id="duel-hp" style="--fill: var(--hp)"></i></div></div>
+  <div id="rival-tag"><b>Sparring partner</b> · hit them to start a duel</div>
   <div id="toast" class="panel" role="status"><span class="label">Goal complete</span><span class="what"></span></div>
   <div id="stances" class="panel" role="group" aria-label="Stance"></div>
   <div id="log"></div>
   <div id="crosshair" aria-hidden="true"></div>
   <div id="bottom">
   <div id="vitals" class="panel">
+    <div class="bar-row">
+      <div class="bar-head"><span class="label">Health</span><span class="mono" id="hp-text">100</span></div>
+      <div class="bar"><i id="hp-bar" style="--fill: var(--hp)"></i></div>
+    </div>
     <div class="bar-row">
       <div class="bar-head"><span class="label">Chi</span><span class="mono" id="chi-text">100</span></div>
       <div class="bar"><i id="chi-bar" style="--fill: var(--chi)"></i></div>
@@ -412,6 +437,7 @@ body {
     <button class="pad" data-slot="3" type="button">E</button>
     <button class="pad" data-slot="4" type="button">F</button>
     <button class="pad" data-sprint="1" type="button">Run</button>
+    <button class="pad" data-guard="1" type="button">Guard</button>
   </div>
 </div>
 
@@ -419,7 +445,7 @@ body {
   <div class="card">
     <span class="label">Bending sandbox · Unreal Engine 5.8 project</span>
     <h2>Bending Training Ground</h2>
-    <p>Walk the field as a bender: four elements, five moves each. Everything you bend is simulated in real units: the whip is 20 kg of pond water (only near a pond), water puts out fire, a wall is tonnes of soil moved from the trench beside it, and wind feeds flames and knocks dummies over.</p>
+    <p>Walk the field as a bender: four elements, five moves each. Everything you bend is simulated in real units: the whip is 20 kg of pond water (only near a pond), water puts out fire, a wall is tonnes of soil moved from the trench beside it, and wind feeds flames and knocks dummies over. A firebender waits in the ring to spar with you.</p>
     <div class="elements">
       <div style="--c: var(--water)"><b>Water</b>Whip from a pond, lash, freeze, splash mud, ice daggers.</div>
       <div style="--c: var(--earth)"><b>Earth</b>Hurl rocks, raise walls, sculpt terrain, earthquake.</div>
@@ -431,8 +457,10 @@ body {
       <kbd>1 2 3 4</kbd><span>Water, Earth, Fire, Air stance</span>
       <kbd>LMB RMB Q E</kbd><span>Your stance's techniques (shown at the bottom)</span>
       <kbd>F</kbd><span>Signature move: Ice Daggers, Earthquake, Ring of Fire, Tornado</span>
+      <kbd>C</kbd><span>Guard (hold); raise it just as a blast arrives to parry it back</span>
       <kbd>H · R · M · Esc</kbd><span>Technique list · reset the field · sound on/off · free the mouse</span>
       <kbd>The field</kbd><span>Burn banners and straw, smash crates, burst water barrels, light the lanterns</span>
+      <kbd>Sparring</kbd><span>A firebender waits in the ring: hit them to start a duel</span>
     </div>
     <button class="go" id="play" type="button">Start training</button>
     <p class="fine" id="boot-note">Loading the physics…</p>
@@ -447,6 +475,7 @@ body {
     <div class="table-wrap"><table id="tech-table"><thead><tr><th>Technique</th><th>Key</th><th>Frames</th><th>What it does</th></tr></thead><tbody></tbody></table></div>
     <p class="fine">Work is billed on top of the flat cost: 5 kJ of motion or 250 kJ of heat buys one point of chi. Out of chi, techniques weaken instead of failing.</p>
     <p class="fine"><b>The field reacts:</b> fire burns the banners, straw bales, crates and dummies (and spreads between them), lights the stone lanterns, and water puts all of it out. Thrown rocks and earthquakes smash crates and burst water barrels, which soak the ground. A waterbender can draw a whip from a barrel as well as a pond.</p>
+    <p class="fine"><b>Sparring:</b> hit the firebender waiting in the ring and they bow and duel you. Watch for the wind-up (a glowing fist) and strike first, or hold <b>C</b> to guard: a guard soaks most of a blast for stamina, and one raised just as the blast arrives parries it straight back. They guard and sidestep too, but not while winding up or recovering. Walls, lanterns and rocks block their line of fire.</p>
     <button class="go" id="help-close" type="button">Back to training</button>
   </div>
 </div>
@@ -468,6 +497,8 @@ const PROP = { STONE: 0, ROCK: 1, BOULDER: 2, CLOD: 3, DUMMY: 4, BRAZIER: 5, ICE
 // Bodies as packed by sb_pack_bodies: 21 kinematic fields, then burn state, burnt and heat fractions, wetness, water
 // held, yaw, variant, a dummy's health (0..1) and seconds left knocked out.
 const BODY_STRIDE = 30;
+const PLAYER_FIELDS = 58;
+const RIVAL_FIELDS = 28;
 const PROJ = { FIRE: 0, AIR: 1, WATER: 2, GROUND_FLAME: 3, SPRAY: 4, ICE_SHARD: 5 };
 const REACTION = ['None', 'Evaporation', 'Condensation', 'Melting', 'Freezing', 'Oxygenation', 'Saturation', 'MudFormed', 'Deflection', 'Erosion', 'Extinguished'];
 const SHORT_NAMES = { 'Water Whip': 'Whip', 'Freeze / Thaw': 'Freeze', 'Release': 'Release', 'Water Blast': 'Throw', 'Rock Throw': 'Rock',
@@ -1160,7 +1191,7 @@ function start() {
   const eyeWhite = new THREE.MeshBasicMaterial({ color: lin(0xfbf8f2) }), irisMat = new THREE.MeshBasicMaterial({ color: lin(0x4a2c1a) });
   const mouthMat = new THREE.MeshBasicMaterial({ color: lin(0x6a2a22) }), cheekMat = new THREE.MeshBasicMaterial({ color: lin(0xf0907a), transparent: true, opacity: 0.4, depthWrite: false });
   const outfitParts = { fur: [], collar: [], pads: [], crown: [], mantle: [], arrow: [], hair: [] };
-  const part = (group, mesh) => { outfitParts[group].push(mesh); return mesh; };
+  const part = (group, mesh) => { outfitParts[group].push(mesh); mesh.userData.part = group; return mesh; };
   const human = new THREE.Group();
   const body = new THREE.Group(); human.add(body);               // squash and stretch about the feet
   const pelvis = new THREE.Group(); pelvis.position.y = 0.88; body.add(pelvis);
@@ -1268,6 +1299,40 @@ function start() {
   applyOutfit(2);
   scene.add(human);
 
+  // ---------------------------------------------------------------- The sparring partner: the same rig in darker Fire Nation red
+  // A clone of the bender with its own materials (so stance changes do not dress it), a red headband, and a tilt
+  // pivot at the feet for falling over.
+  [[body, 'body'], [pelvis, 'pelvis'], [spine, 'spine'], [neck, 'neck'], [head, 'head'], [eyes, 'eyes'], [sashTails, 'sash'],
+    [armR.shoulder, 'armR.s'], [armR.elbow, 'armR.e'], [armL.shoulder, 'armL.s'], [armL.elbow, 'armL.e'],
+    [legR.hip, 'legR.h'], [legR.knee, 'legR.k'], [legR.ankle, 'legR.a'], [legL.hip, 'legL.h'], [legL.knee, 'legL.k'], [legL.ankle, 'legL.a']].forEach(([o, n]) => { o.name = n; });
+  const rivalRig = (() => {
+    const root = human.clone(true);
+    const mats = new Map();
+    root.traverse((o) => {
+      if (!o.isMesh || o.material === inkMat) return;
+      let m = mats.get(o.material);
+      if (!m) { m = o.material.clone(); mats.set(o.material, m); }
+      o.material = m;
+    });
+    const get = (n) => root.getObjectByName(n);
+    const rig = {
+      root, tilt: new THREE.Group(), body: get('body'), pelvis: get('pelvis'), spine: get('spine'), neck: get('neck'), head: get('head'), eyes: get('eyes'), sash: get('sash'),
+      armR: { shoulder: get('armR.s'), elbow: get('armR.e') }, armL: { shoulder: get('armL.s'), elbow: get('armL.e') },
+      legR: { hip: get('legR.h'), knee: get('legR.k'), ankle: get('legR.a') }, legL: { hip: get('legL.h'), knee: get('legL.k'), ankle: get('legL.a') },
+      cloth: [],
+    };
+    const tint = (orig, hex) => { const m = mats.get(orig); if (m) { m.color.copy(lin(hex)); rig.cloth.push(m); } };
+    tint(tunic, 0x8e1f1a); tint(trimMat, 0xe6b53c); tint(beltMat, 0x241614); tint(pants, 0x2a1a1b); tint(boots, 0x1d1514); tint(wrapMat, 0x2b1a17);
+    for (const m of rig.cloth) m.emissive = new THREE.Color(0);
+    root.traverse((o) => { const g = o.userData.part; if (g) o.visible = g === 'collar' || g === 'pads' || g === 'crown' || g === 'hair'; });
+    inked(new THREE.TorusGeometry(0.172, 0.022, 6, 28).rotateX(Math.PI / 2).rotateZ(0.12), toon(0xd8402a, null, 0.3), rig.head, -0.005, 0.07, 0);
+    rig.root.position.set(0, 0, 0);
+    rig.tilt.add(root);
+    rig.tilt.visible = false;
+    scene.add(rig.tilt);
+    return rig;
+  })();
+
   const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpM = new THREE.Matrix4(), tmpS = new THREE.Vector3(), tmpE = new THREE.Euler();
   const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0), ZERO_SCALE = new THREE.Vector3(0, 0, 0);
 
@@ -1314,6 +1379,8 @@ function start() {
     }
   }
   function makeBody(kind, prop, radius, half, slot, variant) {
+    // The sparring partner is drawn by its own rig (rivalRig).
+    if (kind === 2) return new THREE.Group();
     const r = radius / 100;
     const shadowed = (m) => { m.castShadow = m.receiveShadow = true; return m; };
     if (kind === 0 && prop === PROP.BANNER) return makeBanner(variant || 2);
@@ -2362,6 +2429,11 @@ function start() {
       ko: (at) => { tone('triangle', 660, 640, 0.5, 0.25, at); tone('triangle', 440, 430, 0.7, 0.22, at, 0.12); },
       ignite: (at, k) => noiseBurst('lowpass', 1300, 200, 0.6, 0.6 * k, at, 0.7, 0.06),
       goal: () => { [523, 659, 784, 1047].forEach((f, i) => tone('triangle', f, f, 0.25, 0.16, undefined, i * 0.08)); },
+      // A parry rings like struck metal; a duel opens with a low gong.
+      parry: (at, k) => { tone('triangle', 1760, 1700, 0.5, 0.22 * k, at); tone('sine', 2640, 2600, 0.35, 0.12 * k, at, 0.01); noiseBurst('highpass', 5000, 3000, 0.08, 0.3 * k, at, 0.7, 0.001); },
+      block: (at, k) => { tone('sine', 220, 90, 0.16, 0.4 * k, at); noiseBurst('bandpass', 1800, 600, 0.12, 0.35 * k, at, 1.0, 0.001); },
+      gong: (at, k) => { tone('sine', 110, 104, 2.2, 0.5 * k, at); tone('sine', 277, 270, 1.6, 0.18 * k, at); tone('triangle', 166, 160, 1.8, 0.12 * k, at, 0.01); },
+      lose: () => { [392, 330, 262].forEach((f, i) => tone('triangle', f, f * 0.98, 0.35, 0.15, undefined, i * 0.14)); },
     };
     return {
       start,
@@ -2430,7 +2502,7 @@ function start() {
       live.add(key);
       let bar = hpBars.get(key);
       if (!bar) {
-        const el = document.createElement('div'); el.className = 'hpbar';
+        const el = document.createElement('div'); el.className = 'hpbar' + (entry.isRival ? ' rival' : '');
         el.innerHTML = '<b></b><i></i>';
         hud.appendChild(el);
         bar = { el, fill: el.querySelector('i'), lag: el.querySelector('b'), shown: 1, lagValue: 1, lastHit: -10 };
@@ -2439,7 +2511,7 @@ function start() {
       if (entry.health < bar.shown - 0.001) bar.lastHit = now;
       bar.shown = entry.health;
       bar.lagValue += (entry.health - bar.lagValue) * Math.min(1, dt * (entry.health > bar.lagValue ? 20 : 2.5));
-      const visible = (now - bar.lastHit < 4 || entry.health < 0.999) && !entry.knockedOut && entry.headPos;
+      const visible = (entry.alwaysBar || now - bar.lastHit < 4 || entry.health < 0.999) && !entry.knockedOut && entry.headPos;
       if (!visible) { bar.el.style.opacity = '0'; continue; }
       tmpV.copy(entry.headPos).project(camera);
       const dist = camera.position.distanceTo(entry.headPos);
@@ -2488,6 +2560,7 @@ function start() {
     ['banner', 'Set a banner alight'], ['lantern', 'Light a lantern'],
     ['crate', 'Smash a crate'], ['barrel', 'Burst a water barrel'],
     ['ko', 'Knock out a dummy'], ['firetornado', 'Make a fire tornado'],
+    ['parry', 'Parry a fire blast'], ['duel', 'Win a sparring duel'],
   ];
   const goalsEl = $('goals');
   const goalDone = new Set();
@@ -2602,7 +2675,7 @@ function start() {
   const slotHeld = [false, false, false, false, false];
   // A tap shorter than a frame still reaches the simulation: presses latch until the next frame is sent.
   const slotTapped = [false, false, false, false, false];
-  let jumpHeld = false, jumpTapped = false, sprintToggle = false;
+  let jumpHeld = false, jumpTapped = false, sprintToggle = false, guardHeld = false, guardTouch = false;
   let stanceRequest = 0;
   let yaw = 0, pitch = -0.18;
   let locked = false, playing = false;
@@ -2615,6 +2688,7 @@ function start() {
     if (e.code === 'KeyQ') slotHeld[2] = slotTapped[2] = true;
     if (e.code === 'KeyE') slotHeld[3] = slotTapped[3] = true;
     if (e.code === 'KeyF') slotHeld[4] = slotTapped[4] = true;
+    if (e.code === 'KeyC') guardHeld = true;
     if (e.code === 'Space') jumpTapped = true;
     if (e.code === 'KeyR' && !e.repeat) { W.sb_reset(); updateTerrainRect(0, 0, SX - 1, SY - 1); flushTerrain(); seenSerial = 0; pushLog('Training ground reset'); }
     if (e.code === 'Space') e.preventDefault();
@@ -2625,8 +2699,9 @@ function start() {
     if (e.code === 'KeyQ') slotHeld[2] = false;
     if (e.code === 'KeyE') slotHeld[3] = false;
     if (e.code === 'KeyF') slotHeld[4] = false;
+    if (e.code === 'KeyC') guardHeld = false;
   });
-  window.addEventListener('blur', () => { keys.clear(); slotHeld.fill(false); });
+  window.addEventListener('blur', () => { keys.clear(); slotHeld.fill(false); guardHeld = false; });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('mousedown', (e) => {
     if (!playing || coarse) return;
@@ -2686,6 +2761,7 @@ function start() {
         if (pad.dataset.slot) { slotHeld[Number(pad.dataset.slot)] = down; if (down) slotTapped[Number(pad.dataset.slot)] = true; }
         if (pad.dataset.jump) { jumpHeld = down; if (down) jumpTapped = true; }
         if (pad.dataset.sprint && down) { sprintToggle = !sprintToggle; pad.classList.toggle('primary', sprintToggle); }
+        if (pad.dataset.guard) guardTouch = down;
       };
       pad.addEventListener('pointerdown', (e) => { e.preventDefault(); pad.setPointerCapture(e.pointerId); set(true); });
       pad.addEventListener('pointerup', () => set(false));
@@ -2719,13 +2795,13 @@ function start() {
   resize();
 
   const P = { x: 0, y: 0, z: 0 };
-  let player = f64(W.sb_player(), 50);
+  let player = f64(W.sb_player(), PLAYER_FIELDS);
   yaw = player[3];
   let last = performance.now();
   let fpsFrames = 0, fpsTime = 0, moistureTimer = 0;
   const camPos = { x: 0, y: 0, z: 0 }, camDir = { x: 1, y: 0, z: 0 };
   const humanState = { lean: 0 };
-  const chiBar = $('chi-bar'), staminaBar = $('stamina-bar');
+  const chiBar = $('chi-bar'), staminaBar = $('stamina-bar'), hpBar = $('hp-bar');
   let shownStatus = '', shownMove = '';
 
   function computeCamera() {
@@ -2752,10 +2828,10 @@ function start() {
     requestAnimationFrame(frame);
   }
 
-  let hitStop = 0;
+  let hitStop = 0, hurtFlash = 0, duelEndT = -10;
   function tick(dt, now, render = true) {
 
-    player = f64(W.sb_player(), 50);
+    player = f64(W.sb_player(), PLAYER_FIELDS);
     P.x = player[0]; P.y = player[1]; P.z = player[2];
     computeCamera();
 
@@ -2781,12 +2857,13 @@ function start() {
       jumpTapped = false;
       if (jump) buttons |= 16;
       if (sprint) buttons |= 32;
+      if (playing && (guardHeld || guardTouch)) buttons |= 128;
       W.sb_set_input(forward, right, camPos.x, camPos.y, camPos.z, camDir.x, camDir.y, camDir.z, buttons, stanceRequest);
       stanceRequest = 0;
       W.sb_advance(dt);
     }
 
-    player = f64(W.sb_player(), 50);
+    player = f64(W.sb_player(), PLAYER_FIELDS);
     P.x = player[0]; P.y = player[1]; P.z = player[2];
     computeCamera();
     toThree(camPos.x, camPos.y, camPos.z, camera.position);
@@ -2812,6 +2889,8 @@ function start() {
     flushTerrain();
 
     updateHuman(dt);
+    updateRival(dt);
+    updateGuard(dt);
     updateBodies(now / 1000);
     updateVolumes(now / 1000, dt);
     updateWhip(dt);
@@ -2935,6 +3014,7 @@ function start() {
   }
   const qTmp = new THREE.Quaternion(), mTmp = new THREE.Matrix4(), xAxis = new THREE.Vector3(), yAxis = new THREE.Vector3(), zAxis = new THREE.Vector3();
   const FORWARD = new THREE.Vector3(1, 0, 0);
+  const qYaw = new THREE.Quaternion();
   // Point an arm's upper segment along dir (torso space) and bend the elbow forward by bend (rad).
   function poseArm(a, name, dir, bend, rate, dt) {
     yAxis.copy(dir).normalize().negate();
@@ -3144,6 +3224,17 @@ function start() {
       }
     }
 
+    // Guarding: forearms crossed before the face. Rocked by a hit: a jolt back. Knocked down: flat on the back.
+    const guarding = player[51] > 0, downT = player[54], flinch = player[53];
+    if (guarding) { rDir = V(0.65, 0.5, -0.2); rBend = 1.9; lDir = V(0.65, 0.45, 0.2); lBend = 1.9; crouch = 0.14; lean = 0.06; spreadR = spreadL = 0.16; kneeR = kneeL = 0.4; }
+    if (flinch > 0 && downT <= 0) lean += 0.3 * Math.min(1, flinch / 0.3);
+    if (downT > 0) { rDir = V(0.0, 0.1, 1.0); lDir = V(0.0, 0.2, -1.0); rBend = lBend = 0.3; crouch = 0; kneeR = 0.3; kneeL = 0.5; rp = 0.2; lp = -0.1; lean = 0; twist = 0; }
+    const downK = spring('down', downT > 0 ? 1 : 0, downT > 0 ? 9 : 4, dt);
+    qYaw.setFromAxisAngle(UP, player[3] + spin);
+    if (downK > 0.001) { tmpV.set(-player[56], 0, -player[55]).normalize(); human.quaternion.setFromAxisAngle(tmpV, 1.45 * downK).multiply(qYaw); }
+    else human.quaternion.copy(qYaw);
+    eyes.scale.y = downT > 0.5 ? 0.12 : eyes.scale.y;
+
     // Apply: torso, legs (the longer leg carries the pelvis), arms, head looking where you aim.
     spine.rotation.y = spring('twist', twist, R, dt);
     spine.rotation.z = spring('lean', lean + breathe * 0.2, 10, dt);
@@ -3158,6 +3249,204 @@ function start() {
     poseArm(armL, 'al', lDir, lBend, casting ? 26 : 12, dt);
     neck.rotation.y = spring('look', -twist * 0.6, 10, dt);
     neck.rotation.z = spring('nod', casting ? 0.08 : 0.0, 10, dt) + breathe;
+  }
+
+  // ---------------------------------------------------------------- The sparring partner: pose from its state
+  const RS = { WAITING: 0, READY: 1, MOVING: 2, WINDUP: 3, ATTACKING: 4, RECOVERING: 5, GUARDING: 6, DODGING: 7, STAGGERED: 8, DOWN: 9, RETURNING: 10 };
+  const RA = { NONE: 0, BLAST: 1, COMBO: 2, BURST: 3 };
+  let rival = new Float64Array(RIVAL_FIELDS);
+  const rivalAnim = { lastShots: 0, blinkT: 3, flash: 0, lastState: -1, headPos: new THREE.Vector3(), handPos: new THREE.Vector3(), duelShownT: -10 };
+  // Guard shields: a bubble bright at its rim and nearly clear where you look through it, shimmering.
+  function shieldMaterial(color) {
+    return new THREE.ShaderMaterial({
+      uniforms: { uTime, uColor: { value: lin(color) }, uOpacity: { value: 0 } },
+      vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
+        void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix * mv; }`,
+      fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uOpacity; varying vec3 vN; varying vec3 vV; varying vec3 vP;
+        void main() {
+          float rim = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+          float bands = 0.75 + 0.25 * sin(vP.y * 18.0 - uTime * 9.0 + sin(vP.x * 7.0 + uTime * 3.0) * 1.5);
+          float a = uOpacity * (0.12 + 0.88 * pow(rim, 2.2)) * bands;
+          gl_FragColor = vec4(uColor, a);
+        }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+  }
+  const rivalShield = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 14, -0.95, 1.9, 0.5, 1.4), shieldMaterial(0xff7a2a));
+  rivalShield.scale.set(0.75, 0.95, 0.75);
+  scene.add(rivalShield);
+  const rspring = (name, target, rate, dt) => spring('rv' + name, target, rate, dt);
+  function updateRival(dt) {
+    rival = f64(W.sb_rival(), RIVAL_FIELDS);
+    const R = rivalRig;
+    if (!rival[0]) { R.tilt.visible = false; rivalShield.visible = false; return; }
+    R.tilt.visible = true;
+    const t = uTime.value;
+    const state = rival[1] | 0, attack = rival[2] | 0, st = rival[3], dur = rival[4];
+    const progress = dur > 0 ? Math.min(1, st / dur) : 0;
+    const speed = Math.hypot(rival[9], rival[10]) / 100;
+    const stride = rival[12];
+    const run = Math.min(speed / 6, 1.3);
+    const shots = rival[20] | 0;
+    // Feet on the ground; tipped over (about the feet) the way the simulation tilts its body.
+    toThree(rival[5], rival[6], rival[7], R.tilt.position);
+    R.tilt.rotation.set(rspring('tx', rival[15], 14, dt), 0, -rspring('ty', rival[16], 14, dt));
+    R.root.rotation.y = rival[8];
+
+    const R0 = 16;
+    let lean = -0.06 * run, twist = 0, crouch = 0.06, lunge = 0, side = 0;
+    let rp = 0, lp = 0, spreadR = 0.1, spreadL = 0.1, kneeR = 0.3, kneeL = 0.3;
+    // Fighting stance: fists up, weight low, a little bounce.
+    let rDir = V(0.55, -0.72, 0.28), rBend = 2.15, lDir = V(0.6, -0.7, -0.25), lBend = 2.25;
+    crouch = 0.06 + Math.abs(Math.sin(t * 5)) * 0.015;
+    if (run > 0.05 && state !== RS.DOWN) {
+      const sw = Math.sin(stride);
+      rp = sw * 0.7 * run; lp = -sw * 0.7 * run;
+      kneeR = 0.2 + Math.max(0, -Math.cos(stride)) * 1.0 * run; kneeL = 0.2 + Math.max(0, Math.cos(stride)) * 1.0 * run;
+    }
+    const hand = shots % 2 === 0 ? 1 : -1;
+    switch (state) {
+      case RS.WAITING:
+        // Hands clasped behind the back, upright: a master waiting for a student.
+        rDir = V(-0.35, -0.9, 0.15); rBend = 1.1; lDir = V(-0.35, -0.9, -0.15); lBend = 1.1; crouch = 0; spreadR = spreadL = 0.05; kneeR = kneeL = 0.05;
+        if (run > 0.05) { rDir = V(-0.2, -0.95, 0.2); lDir = V(-0.2, -0.95, -0.2); }
+        break;
+      case RS.READY: case RS.RETURNING: {
+        // The bow: fist to palm, a deep bend from the waist.
+        const bow = state === RS.READY ? Math.sin(Math.min(1, st / 0.9) * Math.PI) : Math.sin(Math.min(1, st / 1.0) * Math.PI);
+        lean = -0.95 * bow; crouch = 0.03;
+        rDir = V(0.75, -0.35, 0.05); rBend = 1.55; lDir = V(0.75, -0.3, -0.05); lBend = 1.45; spreadR = spreadL = 0.05; kneeR = kneeL = 0.1;
+        if (state === RS.RETURNING && st > 1.0) { rDir = V(-0.35, -0.9, 0.15); rBend = 1.1; lDir = V(-0.35, -0.9, -0.15); lBend = 1.1; lean = -0.04; }
+        break;
+      }
+      case RS.WINDUP: {
+        const ease = progress * progress;
+        if (attack === RA.BURST) { crouch = 0.08 + 0.18 * ease; rDir = V(0.2, -0.6, 0.75); lDir = V(0.2, -0.6, -0.75); rBend = lBend = 1.4; twist = -0.5 * ease; }
+        else if (attack === RA.COMBO) { rDir = V(-0.3, -0.75, 0.35); lDir = V(-0.3, -0.75, -0.35); rBend = lBend = 2.0; twist = -0.25 * ease; crouch = 0.12; }
+        else {
+          if (hand > 0) { rDir = V(-0.5, -0.75, 0.25); rBend = 2.1; } else { lDir = V(-0.5, -0.75, -0.25); lBend = 2.1; }
+          twist = -0.45 * hand * ease; crouch = 0.12; lean = 0.05;
+        }
+        break;
+      }
+      case RS.ATTACKING: case RS.RECOVERING: {
+        const fresh = state === RS.ATTACKING ? 1 : 1 - progress;
+        if (attack === RA.BURST) {
+          // A spinning kick that throws the ring of fire.
+          rp = 1.25 * fresh; kneeR = 0.15; spreadR = 0.5 * fresh; rDir = V(0.0, 0.1, 1.0); lDir = V(0.0, 0.1, -1.0); rBend = lBend = 0.1; twist = 0.8 * fresh;
+        } else {
+          const punch = shots % 2 === 1 ? 1 : -1;   // the hand that just threw
+          if (punch > 0) { rDir = V(1, 0.08, 0.12); rBend = 0.0; lDir = V(-0.2, -0.7, -0.4); lBend = 1.9; }
+          else { lDir = V(1, 0.08, -0.12); lBend = 0.0; rDir = V(-0.2, -0.7, 0.4); rBend = 1.9; }
+          twist = 0.55 * punch * fresh; lunge = 0.16 * fresh; lean = -0.12 * fresh; crouch = 0.1;
+          if (punch > 0) { rp = 0.45 * fresh; kneeR = 0.55; lp = -0.3 * fresh; } else { lp = 0.45 * fresh; kneeL = 0.55; rp = -0.3 * fresh; }
+        }
+        break;
+      }
+      case RS.GUARDING:
+        // Forearms crossed before the face; a shield of flame in front.
+        rDir = V(0.65, 0.5, -0.2); rBend = 1.9; lDir = V(0.65, 0.45, 0.2); lBend = 1.9; crouch = 0.15; lean = 0.08; spreadR = spreadL = 0.18; kneeR = kneeL = 0.45;
+        break;
+      case RS.DODGING:
+        crouch = 0.16; spreadR = spreadL = 0.32; kneeR = kneeL = 0.6; side = 0.25; lean = -0.1;
+        break;
+      case RS.STAGGERED:
+        lean = 0.35 * (1 - progress); rDir = V(-0.2, 0.3, 0.9); lDir = V(-0.2, 0.3, -0.9); rBend = lBend = 0.5; crouch = 0.04; kneeR = 0.5; lp = -0.4;
+        break;
+      case RS.DOWN:
+        rDir = V(0.0, 0.1, 1.0); lDir = V(0.0, 0.2, -1.0); rBend = lBend = 0.3; crouch = 0; kneeR = 0.3; kneeL = 0.5; rp = 0.2; lp = -0.1;
+        break;
+      default: break;
+    }
+    R.spine.rotation.y = rspring('twist', twist, R0, dt);
+    R.spine.rotation.z = rspring('lean', lean + Math.sin(t * 1.8) * 0.004, state === RS.READY || state === RS.RETURNING ? 16 : 10, dt);
+    R.spine.rotation.x = rspring('side', side, 10, dt);
+    R.pelvis.position.x = rspring('lunge', lunge, R0, dt);
+    const cr = rspring('cr', crouch, 12, dt);
+    const hR = poseLeg(R.legR, 'rvlr', 1, rp + cr * 1.6, spreadR, kneeR + cr * 3.2, R0, dt);
+    const hL = poseLeg(R.legL, 'rvll', -1, lp + cr * 1.6, spreadL, kneeL + cr * 3.2, R0, dt);
+    R.pelvis.position.y = Math.max(hR, hL) * Math.cos(Math.max(spreadR, spreadL)) + 0.11 + Math.abs(Math.cos(stride)) * 0.05 * run;
+    const fast = state === RS.ATTACKING || state === RS.WINDUP || state === RS.GUARDING;
+    poseArm(R.armR, 'rvar', rDir, rBend, fast ? 26 : 12, dt);
+    poseArm(R.armL, 'rval', lDir, lBend, fast ? 26 : 12, dt);
+    R.neck.rotation.y = rspring('look', -twist * 0.6, 10, dt);
+    R.sash.rotation.z = -rspring('sash', Math.min(0.9, speed * 0.09) + Math.sin(t * 2.1) * 0.03, 7, dt);
+    rivalAnim.blinkT -= dt;
+    if (rivalAnim.blinkT < -0.12) rivalAnim.blinkT = 2 + Math.random() * 3;
+    R.eyes.scale.y = state === RS.DOWN ? 0.12 : rivalAnim.blinkT < 0 ? 0.15 : 1;
+    // Struck: a white flash on its clothes.
+    rivalAnim.flash = Math.max(0, rivalAnim.flash - dt);
+    for (const m of R.cloth) m.emissive.setRGB(1, 1, 1).multiplyScalar(rivalAnim.flash * 5);
+
+    R.tilt.updateMatrixWorld(true);
+    R.head.getWorldPosition(rivalAnim.headPos); rivalAnim.headPos.y += 0.42;
+    const fist = hand > 0 ? R.armR : R.armL;
+    fist.elbow.localToWorld(rivalAnim.handPos.set(0, -0.3, 0));
+    // Wind-up: the fist (or both, or the whole body for a burst) gathers fire: the telegraph to react to.
+    if (state === RS.WINDUP) {
+      const k = 0.5 + progress;
+      const at = rivalAnim.handPos;
+      for (let n = 0; n < 2; n++) if (Math.random() < dt * 40) flames.spawn(at.x + rnd() * 0.06, at.y, at.z + rnd() * 0.06, rnd() * 0.4, 0.7 + Math.random() * 0.6, rnd() * 0.4, 0.16 + 0.2 * k, 0.04, 1.0, 0.28, 1.2, 1.0, FLAME_SHAPE);
+      if (Math.random() < dt * 30) glows.spawn(at.x, at.y, at.z, 0, 0, 0, 0.4 * k, 1.0 * k, 0.7, 0.1, 0, 0);
+      if (attack === RA.COMBO) { const other = (hand > 0 ? R.armL : R.armR).elbow.localToWorld(tmpV2.set(0, -0.3, 0)); if (Math.random() < dt * 30) flames.spawn(other.x, other.y, other.z, 0, 0.6, 0, 0.12 * k, 0.03, 1.0, 0.25, 1.2, 1.0, FLAME_SHAPE); }
+      if (attack === RA.BURST && Math.random() < dt * 40) { const a = Math.random() * Math.PI * 2; flames.spawn(R.tilt.position.x + Math.cos(a) * 0.5, R.tilt.position.y + 0.1, R.tilt.position.z + Math.sin(a) * 0.5, 0, 1.2, 0, 0.2 * k, 0.04, 1.0, 0.3, 1.5, 1.0, FLAME_SHAPE); }
+    }
+    // A fresh blast leaves the fist with a flash and a whoosh.
+    if (shots !== rivalAnim.lastShots) {
+      if (shots > rivalAnim.lastShots) {
+        const at = rivalAnim.handPos;
+        sfx.play('fireWhoosh', at.x, at.y, at.z, 1.1);
+        glows.spawn(at.x, at.y, at.z, 0, 0, 0, 0.5, 1.2, 0.6, 0.12, 0, 0);
+      }
+      rivalAnim.lastShots = shots;
+    }
+    // Guarding: a curved shield of flame in front of it.
+    const guardK = rspring('shield', state === RS.GUARDING ? 1 : 0, 18, dt);
+    rivalShield.visible = guardK > 0.02;
+    if (rivalShield.visible) {
+      rivalShield.position.copy(R.tilt.position); rivalShield.position.y += 1.15;
+      rivalShield.rotation.set(0, rival[8], 0);
+      rivalShield.material.uniforms.uOpacity.value = 0.9 * guardK;
+      const fx = Math.cos(rival[8]), fz = -Math.sin(rival[8]);
+      if (Math.random() < dt * 50 * guardK) { const a = rnd() * 0.9, h = rnd() * 0.8; flames.spawn(rivalShield.position.x + (fx * Math.cos(a) - fz * Math.sin(a)) * 0.7, rivalShield.position.y + h, rivalShield.position.z + (fz * Math.cos(a) + fx * Math.sin(a)) * 0.7, 0, 0.8, 0, 0.16, 0.04, 1, 0.22, 1, 1, FLAME_SHAPE); }
+    }
+    if (state !== rivalAnim.lastState) {
+      if (state === RS.DODGING) for (let i = 0; i < 8; i++) smoke.spawn(R.tilt.position.x + rnd() * 0.4, R.tilt.position.y + 0.05, R.tilt.position.z + rnd() * 0.4, rnd() * 1.2, 0.3, rnd() * 1.2, 0.15, 0.7, 0.3, 0.6, 0.3, 0.6);
+      rivalAnim.lastState = state;
+    }
+  }
+
+  // The bender's guard: a shield in their element in front of them; a parry flashes it bright.
+  const guardFx = { flash: 0, parry: 0 };
+  const guardShield = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 14, -0.95, 1.9, 0.5, 1.4), shieldMaterial(0xffffff));
+  guardShield.scale.set(0.8, 1.0, 0.8);
+  scene.add(guardShield);
+  const GUARD_COLORS = { 2: 0x7fd8ff, 1: 0xc8a676, 3: 0xff8a3a, 4: 0xf2f6ff };
+  function updateGuard(dt) {
+    const guarding = player[51] > 0;
+    const k = spring('guardK', guarding ? 1 : 0, 20, dt);
+    guardFx.flash = Math.max(0, guardFx.flash - dt * 4);
+    guardFx.parry = Math.max(0, guardFx.parry - dt * 2.5);
+    guardShield.visible = k > 0.02 || guardFx.parry > 0;
+    if (!guardShield.visible) return;
+    const element = player[8] | 0;
+    guardShield.material.uniforms.uColor.value.copy(lin(guardFx.parry > 0 ? 0xbff8ff : GUARD_COLORS[element] || 0xffffff));
+    guardShield.position.copy(human.position); guardShield.position.y += 1.15;
+    guardShield.rotation.set(0, player[3], 0);
+    // A fresh guard (the parry window) glows brighter.
+    const fresh = guarding && player[52] < 0.2 ? 0.25 : 0;
+    guardShield.material.uniforms.uOpacity.value = Math.min(1.4, (0.75 + fresh * 2) * k + guardFx.flash * 0.6 + guardFx.parry * 0.9);
+    const s = 1 + guardFx.parry * 0.35;
+    guardShield.scale.set(0.8 * s, 1.0 * s, 0.8 * s);
+    const t = uTime.value;
+    if (k > 0.5 && Math.random() < dt * 30) {
+      const a = player[3] + rnd() * 0.9, h = rnd() * 0.75, fx = Math.cos(a), fz = -Math.sin(a);
+      const x = guardShield.position.x + fx * 0.75, y = guardShield.position.y + h, z = guardShield.position.z + fz * 0.75;
+      if (element === 3) flames.spawn(x, y, z, 0, 0.6, 0, 0.13, 0.03, 1, 0.2, 1, 1, FLAME_SHAPE);
+      else if (element === 2) emit(x, y, z, 1, 0x9fe0ff, 0.4, 0.3, 0, 0.35);
+      else if (element === 1) emit(x, guardShield.position.y - 1.0, z, 1, 0x9a8063, 0.6, 0.8, 4, 0.5);
+      else emit(x + Math.sin(t * 9) * 0.1, y, z + Math.cos(t * 9) * 0.1, 1, 0xf2f6ff, 0.5, 0.2, 0, 0.3);
+    }
   }
 
   // Burning props draw their own fire along their shape; the matching flame volumes are skipped in updateVolumes.
@@ -3203,6 +3492,16 @@ function start() {
       }
       const m = entry.mesh;
       entry.x = b[o + 2]; entry.y = b[o + 3]; entry.z = b[o + 4];
+      if (kind === 2) {
+        // The sparring partner: a health bar over its head (always shown in a duel), a flash when struck.
+        entry.isDummy = true; entry.isRival = true;
+        entry.health = health; entry.knockedOut = knockedOut;
+        entry.alwaysBar = rival[25] > 0;
+        entry.headPos = (entry.headPos || new THREE.Vector3()).copy(rivalAnim.headPos);
+        entry.flash = Math.max(0, (entry.flash || 0) - dt);
+        if (entry.flash > 0) rivalAnim.flash = Math.max(rivalAnim.flash, entry.flash);
+        continue;
+      }
       if (kind === 0 && prop === PROP.BANNER) {
         toThree(b[o + 17], b[o + 18], b[o + 19], m.position);
         m.rotation.y = yawToThree(yaw);
@@ -3654,12 +3953,65 @@ function start() {
         if (energy >= 5) sfx.play('hit', x, y, z, 0.5 + energy / 60);
         registerHit(energy, x, y + 0.3, z);
         break;
-      case 11: // knocked out
+      case 11: { // knocked out (the sparring partner's knockout is announced as the duel's result)
+        const isRival = rival[0] > 0 && Math.hypot(x * 100 - rival[5], -z * 100 - rival[6]) < 200;
         sfx.play('ko', x, y, z);
-        floatLabel('K.O.!', x, y + 0.9, z, null, 'ko');
+        if (!isRival) floatLabel('K.O.!', x, y + 0.9, z, null, 'ko');
         for (let i = 0; i < 24; i++) sparks.spawn(x, y + 0.4, z, rnd() * 4, 1 + Math.random() * 3, rnd() * 4, 0.05, 0.015, 1, 0.6 + Math.random() * 0.4, -3, 1.5, EMBER_SHAPE);
         kick(0.4);
-        completeGoal('ko');
+        if (!isRival) completeGoal('ko');
+        break;
+      }
+      case 13: { // the sparring partner's fire struck the player
+        sfx.play('hit', x, y, z, 0.6 + energy / 25);
+        sfx.play('fireWhoosh', x, y, z, 0.5);
+        floatLabel('-' + energy.toFixed(0), x + rnd() * 0.3, y + 0.5, z + rnd() * 0.3, null, 'hurt');
+        for (let i = 0; i < 12; i++) flames.spawn(x + rnd() * 0.3, y + rnd() * 0.4, z + rnd() * 0.3, rnd() * 2.5, 0.5 + Math.random() * 1.5, rnd() * 2.5, 0.22 + Math.random() * 0.2, 0.04, 1.0, 0.35 + Math.random() * 0.2, 1.2, 1.5, FLAME_SHAPE);
+        hurtFlash = Math.min(1, hurtFlash + 0.35 + energy / 30);
+        kick(Math.min(0.5, 0.15 + energy / 40));
+        break;
+      }
+      case 14: // the guard took a blast
+        sfx.play('block', x, y, z, 1);
+        guardFx.flash = 1;
+        for (let i = 0; i < 14; i++) sparks.spawn(x, y, z, rnd() * 4, Math.random() * 3, rnd() * 4, 0.05, 0.012, 1, 0.4 + Math.random() * 0.3, -2, 1.2, EMBER_SHAPE);
+        floatLabel(energy >= 0.5 ? `Blocked · -${energy.toFixed(0)}` : 'Blocked', x, y + 0.6, z, null, 'block');
+        kick(0.1);
+        break;
+      case 15: // a perfect guard: the blast flies back
+        sfx.play('parry', x, y, z, 1.2);
+        guardFx.parry = 1;
+        glows.spawn(x, y, z, 0, 0, 0, 0.6, 2.4, 0.8, 0.18, 0, 0);
+        for (let i = 0; i < 26; i++) sparks.spawn(x, y, z, rnd() * 7, rnd() * 5, rnd() * 7, 0.06, 0.015, 1, 0.5 + Math.random() * 0.4, -1, 1.2, EMBER_SHAPE, 2);
+        floatLabel('PARRY!', x, y + 0.8, z, null, 'parry');
+        hitStop = Math.max(hitStop, 0.09);
+        kick(0.35);
+        completeGoal('parry');
+        break;
+      case 16: // the player was knocked down
+        sfx.play('ko', x, y, z);
+        floatLabel('DOWN!', x, y + 1.6, z, null, 'ko');
+        hurtFlash = 1;
+        kick(0.6);
+        for (let i = 0; i < 10; i++) smoke.spawn(x + rnd() * 0.6, y + 0.1, z + rnd() * 0.6, rnd() * 0.8, 0.4 + Math.random() * 0.4, rnd() * 0.8, 0.2, 0.9, 0.3, 0.9 + Math.random() * 0.4, 0.2, 0.6);
+        break;
+      case 17: // a duel begins
+        sfx.play('gong', x, y, z, 1.2);
+        floatLabel('DUEL!', x, y + 0.2, z, null, 'duel');
+        break;
+      case 18: // a duel ends
+        if (detail === 1) { floatLabel('YOU WIN!', x, y + 0.2, z, null, 'win'); completeGoal('duel'); sfx.play('goal'); }
+        else if (detail === 2) { floatLabel('DEFEATED', x, y + 0.2, z, null, 'lose'); sfx.play('lose'); }
+        else floatLabel('Duel called off', x, y + 0.2, z, null, 'block');
+        duelEndT = uTime.value;
+        break;
+      case 19: // the sparring partner winds up: a flare at its fist (the cue to guard or strike first)
+        sfx.play('ignite', x, y, z, detail === 3 ? 1.0 : 0.6);
+        glows.spawn(x, y, z, 0, 0, 0, 0.35, 1.0, 0.7, 0.1, 0, 0);
+        break;
+      case 20: // the sparring partner guards (1) or sidesteps (2)
+        if (detail === 1) sfx.play('block', x, y, z, 0.6);
+        else sfx.play('airWhoosh', x, y, z, 0.5);
         break;
       case 12: // back on its feet: a puff of dust
         for (let i = 0; i < 10; i++) smoke.spawn(x + rnd() * 0.6, y + 0.1, z + rnd() * 0.6, rnd() * 0.8, 0.5 + Math.random() * 0.5, rnd() * 0.8, 0.2, 0.9, 0.3, 0.9 + Math.random() * 0.4, 0.2, 0.6);
@@ -3775,6 +4127,36 @@ function start() {
     }
   }
 
+  // The duel scoreboard (top centre) and the invitation over the waiting sparring partner.
+  const duelEl = $('duel'), rivalTag = $('rival-tag'), hurtEl = $('hurt');
+  function updateDuelHud() {
+    const active = rival[0] > 0 && rival[25] > 0;
+    const recent = uTime.value - duelEndT < 4;
+    const show = active || recent;
+    if (duelEl.hidden === show) duelEl.hidden = !show;
+    if (show) {
+      $('duel-you').textContent = rival[21].toFixed(0);
+      $('duel-them').textContent = rival[22].toFixed(0);
+      $('duel-hp').style.transform = `scaleX(${Math.max(0, rival[13]).toFixed(3)})`;
+    }
+    // Waiting, near enough to see: invite a challenge.
+    const waiting = rival[0] > 0 && (rival[1] | 0) === RS.WAITING;
+    const near = Math.hypot(rival[5] - P.x, rival[6] - P.y) < 2200;
+    let tagShown = false;
+    if (waiting && near && playing) {
+      tmpV.copy(rivalAnim.headPos); tmpV.y += 0.25;
+      tmpV.project(camera);
+      if (tmpV.z < 1) {
+        rivalTag.style.left = ((tmpV.x * 0.5 + 0.5) * canvas.clientWidth).toFixed(1) + 'px';
+        rivalTag.style.top = ((-tmpV.y * 0.5 + 0.5) * canvas.clientHeight).toFixed(1) + 'px';
+        tagShown = true;
+      }
+    }
+    rivalTag.style.opacity = tagShown ? '1' : '0';
+    hurtFlash = Math.max(0, hurtFlash - 0.05);
+    hurtEl.style.opacity = (player[54] > 0 ? Math.max(0.35, hurtFlash) : hurtFlash).toFixed(2);
+  }
+
   function updateHud() {
     const element = player[8] | 0;
     if (element !== shownStance) renderStance(element);
@@ -3783,6 +4165,10 @@ function start() {
     staminaBar.style.transform = `scaleX(${(stamina / maxStamina).toFixed(3)})`;
     $('chi-text').textContent = chi.toFixed(0) + ' / ' + maxChi.toFixed(0);
     $('stamina-text').textContent = stamina.toFixed(0) + ' / ' + maxStamina.toFixed(0);
+    const hp = player[49], maxHp = player[50] || 100;
+    hpBar.style.transform = `scaleX(${Math.max(0, hp / maxHp).toFixed(3)})`;
+    $('hp-text').textContent = hp.toFixed(0) + ' / ' + maxHp.toFixed(0);
+    updateDuelHud();
 
     const lines = [];
     if (player[36] > 0) lines.push(`<span class="on">Whip: ${player[37].toFixed(1)} kg${player[38] > 0 ? ', frozen' : ''}</span>`);
@@ -3796,6 +4182,8 @@ function start() {
       : `<span class="warn">No water in reach: nearest pond ${(water.distance / 100).toFixed(0)} m away (15 m needed), or a water barrel</span>`);
     shoreRings.forEach((ring, i) => { ring.material.opacity = looking && inReach && i === water.pond ? 0.18 + 0.12 * Math.sin(uTime.value * 4) : 0; });
     if (player[17] < 0.95) lines.push(`<span class="warn">Mud underfoot: traction ${player[17].toFixed(2)}</span>`);
+    if (player[54] > 0) lines.push(`<span class="warn">Knocked down: up in ${player[54].toFixed(1)} s</span>`);
+    else if (player[51] > 0) lines.push(`<span class="on">Guarding${player[52] < 0.2 ? ' · parry ready' : ''}</span>`);
     lines.push(`Work done: ${(player[28] / 1000).toFixed(0)} kJ motion · ${(player[27] / 1e6).toFixed(1)} MJ heat`);
     const status = lines.join('<br>');
     if (status !== shownStatus) { $('status').innerHTML = status; shownStatus = status; }
@@ -3837,7 +4225,7 @@ function start() {
   window.trainingGround = {
     look(dYaw, dPitch) { yaw += dYaw; pitch = Math.min(0.75, Math.max(-1.25, pitch + dPitch)); },
     face(x, y, z) { const dx = x - P.x, dy = y - P.y, dz = z - (P.z + 165); yaw = Math.atan2(dy, dx); pitch = Math.atan2(dz, Math.hypot(dx, dy)); },
-    state() { const p = f64(W.sb_player(), 50); return { x: p[0], y: p[1], z: p[2], stance: p[8], move: p[9], phase: p[10], chi: p[13], whip: p[36] > 0, whipKg: p[37] }; },
+    state() { const p = f64(W.sb_player(), PLAYER_FIELDS); return { x: p[0], y: p[1], z: p[2], stance: p[8], move: p[9], phase: p[10], chi: p[13], whip: p[36] > 0, whipKg: p[37], health: p[49], guarding: p[51] > 0, down: p[54] }; },
     /** Manual clock: frames advance only through step(), exactly 1/60 s each, so captures line up with the physics. */
     manual(on) {
       if (on && manualClock === null) manualClock = performance.now();
@@ -3846,6 +4234,10 @@ function start() {
     step(frames = 1, dt = 1 / 60) { for (let i = 0; i < frames; i++) { manualClock += dt * 1000; tick(dt, manualClock, i === frames - 1); } },
     /** Press (and release on the next frame) one of the four technique slots: 0 LMB, 1 RMB, 2 Q, 3 E. */
     tap(slot) { slotTapped[slot] = true; },
+    /** Hold or release the guard (C). */
+    guard(down) { guardHeld = down; },
+    /** The sparring partner: state (0 waiting ... 10 returning), position, health, the duel's score. */
+    rival() { const r = f64(W.sb_rival(), RIVAL_FIELDS); return { state: r[1], attack: r[2], x: r[5], y: r[6], z: r[7], health: r[13], duel: r[25] > 0, wins: r[21], losses: r[22] }; },
     hold(slot, down) { slotHeld[slot] = down; },
     /** Render-only camera (cm, radians relative to the bender's facing); null restores the chase camera. */
     view(azimuth, dist, height, lead = 250) { debugView = azimuth === null ? null : { azimuth, dist, height, lead }; present(); },

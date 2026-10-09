@@ -2324,6 +2324,7 @@ namespace BendingSandbox3D
 					if (NumFrameEvents < MaxFrameEvents)
 					{
 						FSandboxEvent& Event = FrameEvents[NumFrameEvents++];
+						Event = FSandboxEvent();
 						Event.Type = EReactionType::Saturation;
 						Event.LocationCm = Splash;
 						Event.MassKg = MassKg;
@@ -2621,6 +2622,8 @@ namespace BendingSandbox3D
 			if (NumFrameEvents < MaxFrameEvents)
 			{
 				FSandboxEvent& Out = FrameEvents[NumFrameEvents++];
+				// A fresh event: a slot reused from an earlier frame must not keep its old effect.
+				Out = FSandboxEvent();
 				Out.Type = Event.Type;
 				Out.LocationCm = Event.LocationCm;
 				Out.MassKg = Event.MassKg;
@@ -2792,7 +2795,7 @@ namespace BendingSandbox3D
 		}
 	}
 
-	void FSandbox::HurtPlayer(double Damage, const FVec3& Direction, double KnockbackCmS)
+	void FSandbox::HurtPlayer(double Damage, const FVec3& Direction, double KnockbackCmS, bool bBlocked)
 	{
 		if (Player.DownS > 0.0 || Player.ProtectS > 0.0 || Damage <= 0.0)
 		{
@@ -2801,8 +2804,12 @@ namespace BendingSandbox3D
 		const double Dealt = KMin(Damage, Player.Health);
 		Player.Health -= Dealt;
 		Player.VelocityCmS += Flat(Direction) * KnockbackCmS;
-		Player.FlinchS = KMax(Player.FlinchS, 0.3);
-		AddEffect(ESandboxEffect::PlayerHit, GetChestCm(), Dealt);
+		// A blocked hit is reported as the block; only a clean hit rocks them.
+		if (!bBlocked)
+		{
+			Player.FlinchS = KMax(Player.FlinchS, 0.3);
+			AddEffect(ESandboxEffect::PlayerHit, GetChestCm(), Dealt);
+		}
 		if (Player.Health > 1e-6)
 		{
 			return;
@@ -2894,8 +2901,7 @@ namespace BendingSandbox3D
 				Projectile.VelocityCmS = (Direction * -0.3 + Up * 0.7 + Across * (RivalRandom() < 0.5 ? -0.6 : 0.6)) * 450.0;
 				Player.Stamina = KMax(Player.Stamina - BlockStamina, 0.0);
 				AddEffect(ESandboxEffect::Blocked, Projectile.LocationCm, Damage * BlockDamageScale);
-				HurtPlayer(Damage * BlockDamageScale, Direction, 0.35 * FlameKnockbackCmS);
-				Player.FlinchS = 0.0;
+				HurtPlayer(Damage * BlockDamageScale, Direction, 0.35 * FlameKnockbackCmS, true);
 				if (Player.Stamina <= 0.0)
 				{
 					Player.bGuarding = false;

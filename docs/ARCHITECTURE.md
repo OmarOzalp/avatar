@@ -196,6 +196,31 @@ browser build (`Tools/Sandbox3D`, WebAssembly + three.js) and the Unreal build (
 | `BendingArena.h` | The training ground: a 96 × 96 m terrain (241² samples, 40 cm cells) with a plaza, hills, two pond basins and a boundary ridge, the prop placements (stones, rocks, boulders, soil clods, dummies, braziers, ice blocks, banners, stone lanterns, straw bales, crates, water barrels), each prop's physical volume, how it burns, how hard a blow smashes it, the water it holds, and the player start. |
 | `BendingCombustion.h` — `FCombustible` | Burning props. A prop soaks up heat from the Fire volumes within its reach (W per kelvin above ambient, scaled by flame size) and leaks it away over a few seconds; past its ignition heat it catches and keeps an **owned Fire volume** burning on itself, topped up to its flame temperature from its fuel, for its burn time. That flame is ordinary fire in the world: water boils on it, wind feeds it, and it heats the props beside it, so fire spreads. Enough water within reach (enough to boil away two seconds of the fire's heat) douses it at once and leaves it wet for a few seconds; a flame lost with no water about (merged into a passing fireball) flares up again. |
 
+### Sparring partner and guard (browser build, `Tools/Sandbox3D`)
+
+`FSandbox` adds a firebender who spars with the player (`FRival`, `ERivalState`). Its body is an ordinary body in the
+simulation (`EBodyKind::Rival`, a 70 kg capsule the size of the player), so blasts shove it, fire hurts it and a
+knockout tips it over like a dummy. Its behaviour is a state machine:
+
+| State | What it does |
+|---|---|
+| Waiting | Stands at `FArenaLayout::SparringPostCm` facing the player, hands behind its back. A real hit (3+ damage) is a challenge, not damage. |
+| Ready | Bows (0.9 s), then fights. Player and partner are both at full health. |
+| Moving | Keeps 4.8–9.5 m away: closes in from far, backs off from near, circles in between (switching direction every 1–2.5 s). Attacks when its cooldown is up and it has a clear line to the player: terrain (an earth wall) and solid props (lanterns, rocks) block it, and it works round them. |
+| WindUp | The telegraph: a glowing fist for 0.5 s (blast), 0.38 s (combo) or 0.32 s (burst). |
+| Attacking | A 0.6 kg blast at 17 m/s, three 0.4 kg blasts at 19 m/s, or (within 3.3 m) a ring of ten flames. Its flames are born clear of its own body and never hurt it. |
+| Recovering | 0.45–0.6 s committed: it cannot guard or dodge. The opening to punish. |
+| Guarding / Dodging | Only from Moving, decided once per throw coming at it within 0.6 s: guard (40%, 15% against rocks; takes a quarter of the damage) or sidestep (25%, 55% against rocks). |
+| Staggered | A hit of 8+ damage interrupts it for 0.45 s; then 1.6 s of poise so it cannot be stun-locked. |
+| Down / Returning | Knocked out for 4 s; it gets up whole, bows and walks back to its post. |
+
+It takes at most 40 damage from one blow (a boulder staggers it rather than ending the duel). A flame striking a
+fighter does `12 × (m / 0.6 kg)^1.5`; lingering fire (burning ground, props, a ground flame) hurts it at 1 point per
+25 kJ of heating. The player has 100 health, hurt only by the partner's attacks. Guard (C) slows them to 35% and stops
+new moves; a guard takes 20% of a flame's damage and 10 stamina per block, and one raised within 0.2 s of the hit
+parries: the flame flies back at the partner, 20% faster. A guard can be raised again 0.3 s after it is dropped, so it
+cannot be tapped into a permanent parry. Knocked down, the player lies still for 3 s and gets up whole.
+
 ### Unreal sandbox (`Plugins/Bending/.../Sandbox`, `Source/Avatar`)
 
 Nothing in it needs an asset. Meshes are engine basic shapes tinted through `BasicShapeMaterial`, the terrain is a
@@ -241,9 +266,10 @@ builds both WebAssembly modules and checks them against the native results.
   - the whip against fire;
   - freeze and thaw, and partial freezing by mass when short of chi;
   - release, following a sprinting bender, and determinism.
-- **3D sandbox (94 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
+- **3D sandbox (119 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
   jumping, every technique, water putting out fire, burning, smashing and soaking props, dummy health and knockouts,
-  chi, determinism and cost.
+  the sparring partner (waiting, challenged, attacking, circling), guard and parry, winning and losing a duel, events
+  that are never both a reaction and an effect, chi, determinism and cost.
 - **WebAssembly parity:** both freestanding wasm builds replay their sessions and must match the native digests exactly.
 
 | Scenario | What happens (measured) |
