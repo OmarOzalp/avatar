@@ -17,6 +17,7 @@
 #include "Sandbox/BendableTerrain.h"
 #include "Sandbox/BendingPropActor.h"
 #include "Sandbox/BendingSandboxLibrary.h"
+#include "Sandbox/BendingSparringPartner.h"
 
 namespace
 {
@@ -78,6 +79,11 @@ APlayerStart* ABendingSandboxArena::GetPlayerStart() const
 	return PlayerStart;
 }
 
+ABendingSparringPartner* ABendingSandboxArena::GetSparringPartner() const
+{
+	return SparringPartner;
+}
+
 BendingSim::FTerrain* ABendingSandboxArena::GetTerrain() const
 {
 	return TerrainActor ? TerrainActor->GetTerrain() : nullptr;
@@ -103,6 +109,7 @@ void ABendingSandboxArena::BuildArena()
 	SpawnTerrain();
 	SpawnPonds();
 	SpawnProps();
+	SpawnSparringPartner();
 	SpawnPlayerStart();
 	if (bSpawnLighting)
 	{
@@ -173,6 +180,29 @@ void ABendingSandboxArena::SpawnProps()
 			Prop->InitArenaProp(Placement.Kind, Ground, Placement.YawDeg, Placement.Variant);
 			Props.Add(Prop);
 		}
+	}
+}
+
+void ABendingSandboxArena::SpawnSparringPartner()
+{
+	FVector Post(Layout.SparringPostCm.X, Layout.SparringPostCm.Y, 0.0);
+	Post.Z = GetGroundHeightAt(Post);
+	const FVector ToStart(Layout.PlayerStartCm.X - Post.X, Layout.PlayerStartCm.Y - Post.Y, 0.0);
+	const double YawDeg = FMath::RadiansToDegrees(BendingSim::KAtan2(ToStart.Y, ToStart.X));
+
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	// Its actor location is the centre of its capsule.
+	const FVector Center = Post + FVector(0.0, 0.0, ABendingSparringPartner::BodyHalfHeightCm + ABendingSparringPartner::BodyRadiusCm);
+	SparringPartner = GetWorld()->SpawnActor<ABendingSparringPartner>(ABendingSparringPartner::StaticClass(), FTransform(FRotator(0.0, YawDeg, 0.0), Center), Params);
+	if (SparringPartner)
+	{
+		SparringPartner->InitPartner(Post, YawDeg);
+	}
+	else
+	{
+		UE_LOG(LogBending, Error, TEXT("%s could not spawn the sparring partner."), *GetName());
 	}
 }
 

@@ -17,6 +17,7 @@
 #include "Interaction/BendingInteractionSubsystem.h"
 #include "Sandbox/BendingPropActor.h"
 #include "Sandbox/BendingSandboxLibrary.h"
+#include "Sandbox/BendingSparringPartner.h"
 #include "Sandbox/BendingTechniqueComponent.h"
 #include "Sandbox/BendingTechniqueMove.h"
 #include "Sandbox/BendingTechniqueTypes.h"
@@ -38,6 +39,18 @@ namespace
 	constexpr int32 MaxReactionLines = 8;
 	/** The frame bar keeps showing a finished move this long, fading over the second half. */
 	constexpr double FrameBarHoldSeconds = 1.5;
+	/** The duel scoreboard stays up this long after a duel ends. */
+	constexpr double DuelBoardHoldSeconds = 4.0;
+	/** The waiting sparring partner invites a challenge when the player is this close. */
+	constexpr double SparringInviteRangeCm = 2200.0;
+	const FLinearColor PartnerNameColor(1.f, 0.6f, 0.42f);
+	const FLinearColor GuardColor(0.55f, 0.85f, 1.f);
+	const FLinearColor DownColor(1.f, 0.4f, 0.3f);
+
+	FLinearColor GetHealthColor(float Fraction)
+	{
+		return UBendingSandboxLibrary::LerpColor(FLinearColor(1.f, 0.25f, 0.15f), FLinearColor(0.45f, 0.9f, 0.3f), Fraction);
+	}
 
 	FLinearColor WithAlpha(FLinearColor Color, float Alpha)
 	{
@@ -127,6 +140,7 @@ void AAvatarHUD::BeginPlay()
 		ReactionHandle = Subsystem->OnReactionNative.AddUObject(this, &AAvatarHUD::HandleReaction);
 	}
 	PropHitHandle = ABendingPropActor::OnPropHit.AddUObject(this, &AAvatarHUD::HandlePropHit);
+	SparringHandle = ABendingSparringPartner::OnSparringCallout.AddUObject(this, &AAvatarHUD::HandleSparringCallout);
 }
 
 void AAvatarHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -138,6 +152,8 @@ void AAvatarHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	ReactionHandle.Reset();
 	ABendingPropActor::OnPropHit.Remove(PropHitHandle);
 	PropHitHandle.Reset();
+	ABendingSparringPartner::OnSparringCallout.Remove(SparringHandle);
+	SparringHandle.Reset();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -203,40 +219,92 @@ void AAvatarHUD::DrawHUD()
 	}
 	DrawStatus(Pawn);
 	DrawFeed(Pawn);
+	DrawSparring(Pawn);
 	DrawHits();
 	DrawControls();
 }
 
 void AAvatarHUD::HandlePropHit(const ABendingPropActor* Prop, const FVector& Location, double Damage, bool bKnockout)
 {
-	FHitNumber& Number = HitNumbers.AddDefaulted_GetRef();
-	Number.Location = Location + FVector(FMath::FRandRange(-20.f, 20.f), FMath::FRandRange(-20.f, 20.f), 0.0);
-	Number.TimeSeconds = GetTimeSeconds();
 	if (bKnockout)
 	{
-		Number.Text = TEXT("K.O.!");
-		Number.Color = FLinearColor(1.f, 0.85f, 0.2f);
-		Number.Scale = 2.2f;
+		AddCallout(Location, TEXT("K.O.!"), FLinearColor(1.f, 0.85f, 0.2f), 2.2f, 1.5f);
 	}
 	else
 	{
-		Number.Text = FString::Printf(TEXT("%.0f"), Damage);
-		Number.Color = Damage >= 45.0 ? FLinearColor(1.f, 0.3f, 0.12f) : (Damage >= 18.0 ? FLinearColor(1.f, 0.6f, 0.2f) : FLinearColor(1.f, 0.95f, 0.75f));
-		Number.Scale = Damage >= 45.0 ? 2.0f : (Damage >= 18.0 ? 1.6f : 1.25f);
-		// Real blows chain a combo; a dummy's burning ticks only add damage.
-		const double Now = GetTimeSeconds();
-		if (Now - LastHitSeconds > 2.5)
-		{
-			ComboCount = 0;
-			ComboDamage = 0.0;
-		}
-		if (Damage >= 5.0)
-		{
-			++ComboCount;
-			LastHitSeconds = Now;
-		}
-		ComboDamage += Damage;
+		AddDamageNumber(Location, Damage);
 	}
+}
+
+void AAvatarHUD::HandleSparringCallout(EBendingSparringCallout Callout, const FVector& Location, double Amount)
+{
+	switch (Callout)
+	{
+	case EBendingSparringCallout::PartnerHit:
+		AddDamageNumber(Location, Amount);
+		break;
+	case EBendingSparringCallout::PartnerKnockedOut:
+		AddCallout(Location, TEXT("K.O.!"), FLinearColor(1.f, 0.85f, 0.2f), 2.2f, 1.5f);
+		break;
+	case EBendingSparringCallout::PlayerHit:
+		AddCallout(Location, FString::Printf(TEXT("-%.0f"), Amount), FLinearColor(1.f, 0.32f, 0.25f), 1.5f, 1.2f);
+		break;
+	case EBendingSparringCallout::Blocked:
+		AddCallout(Location, Amount >= 0.5 ? FString::Printf(TEXT("Blocked \u00B7 -%.0f"), Amount) : FString(TEXT("Blocked")), GuardColor, 1.2f, 1.2f);
+		break;
+	case EBendingSparringCallout::Parried:
+		AddCallout(Location, TEXT("PARRY!"), FLinearColor(1.f, 0.92f, 0.45f), 2.2f, 1.6f);
+		break;
+	case EBendingSparringCallout::PlayerDown:
+		AddCallout(Location + FVector(0.0, 0.0, 120.0), TEXT("DOWN!"), DownColor, 2.2f, 1.8f);
+		break;
+	case EBendingSparringCallout::DuelStarted:
+		AddCallout(Location, TEXT("DUEL!"), FLinearColor(1.f, 0.55f, 0.25f), 2.4f, 2.f);
+		break;
+	case EBendingSparringCallout::DuelWon:
+		AddCallout(Location, TEXT("YOU WIN!"), FLinearColor(1.f, 0.85f, 0.2f), 2.6f, 2.5f);
+		LastDuelEndSeconds = GetTimeSeconds();
+		break;
+	case EBendingSparringCallout::DuelLost:
+		AddCallout(Location, TEXT("DEFEATED"), DownColor, 2.4f, 2.5f);
+		LastDuelEndSeconds = GetTimeSeconds();
+		break;
+	case EBendingSparringCallout::DuelCalledOff:
+		AddCallout(Location, TEXT("Duel called off"), DimTextColor, 1.4f, 2.f);
+		LastDuelEndSeconds = GetTimeSeconds();
+		break;
+	}
+}
+
+void AAvatarHUD::AddDamageNumber(const FVector& Location, double Damage)
+{
+	const FLinearColor Color = Damage >= 45.0 ? FLinearColor(1.f, 0.3f, 0.12f) : (Damage >= 18.0 ? FLinearColor(1.f, 0.6f, 0.2f) : FLinearColor(1.f, 0.95f, 0.75f));
+	const float Scale = Damage >= 45.0 ? 2.0f : (Damage >= 18.0 ? 1.6f : 1.25f);
+	AddCallout(Location, FString::Printf(TEXT("%.0f"), Damage), Color, Scale, 1.5f);
+	// Real blows chain a combo; burning ticks only add damage.
+	const double Now = GetTimeSeconds();
+	if (Now - LastHitSeconds > 2.5)
+	{
+		ComboCount = 0;
+		ComboDamage = 0.0;
+	}
+	if (Damage >= 5.0)
+	{
+		++ComboCount;
+		LastHitSeconds = Now;
+	}
+	ComboDamage += Damage;
+}
+
+void AAvatarHUD::AddCallout(const FVector& Location, const FString& Text, const FLinearColor& Color, float Scale, float Seconds)
+{
+	FHitNumber& Number = HitNumbers.AddDefaulted_GetRef();
+	Number.Location = Location + FVector(FMath::FRandRange(-20.f, 20.f), FMath::FRandRange(-20.f, 20.f), 0.0);
+	Number.Text = Text;
+	Number.Color = Color;
+	Number.Scale = Scale;
+	Number.Seconds = Seconds;
+	Number.TimeSeconds = GetTimeSeconds();
 	if (HitNumbers.Num() > 24)
 	{
 		HitNumbers.RemoveAt(0);
@@ -270,12 +338,12 @@ void AAvatarHUD::DrawHits()
 		DrawRect(UBendingSandboxLibrary::LerpColor(FLinearColor(1.f, 0.25f, 0.15f), FLinearColor(0.45f, 0.9f, 0.3f), Fraction), X, Y, Width * Fraction, Height);
 	}
 
-	// Damage numbers rise and fade over a second and a half.
+	// Damage numbers and callouts rise and fade over their last second.
 	for (int32 Index = HitNumbers.Num() - 1; Index >= 0; --Index)
 	{
 		const FHitNumber& Number = HitNumbers[Index];
 		const double Age = Now - Number.TimeSeconds;
-		if (Age > 1.5)
+		if (Age > Number.Seconds)
 		{
 			HitNumbers.RemoveAt(Index);
 			continue;
@@ -286,7 +354,7 @@ void AAvatarHUD::DrawHits()
 			continue;
 		}
 		FLinearColor Color = Number.Color;
-		Color.A = FMath::Clamp(static_cast<float>(1.5 - Age), 0.f, 1.f);
+		Color.A = FMath::Clamp(static_cast<float>(Number.Seconds - Age), 0.f, 1.f);
 		const float Pop = static_cast<float>(1.0 + 0.4 * FMath::Max(0.0, 1.0 - Age * 6.0));
 		const float Scale = Number.Scale * Pop;
 		DrawLabel(Number.Text, static_cast<float>(Screen.X) - 0.5f * GetTextWidth(Number.Text, Font, Scale), static_cast<float>(Screen.Y), Color, Font, Scale);
@@ -302,6 +370,78 @@ void AAvatarHUD::DrawHits()
 		DrawLabel(Count, X - GetTextWidth(Count, Font, 2.6f), Y, FLinearColor(1.f, 0.85f, 0.25f), Font, 2.6f);
 		DrawLabel(Label, X - GetTextWidth(Label, Font, 1.1f), Y + 60.f * UIScale, FLinearColor::White, Font, 1.1f);
 	}
+}
+
+void AAvatarHUD::DrawSparring(const APawn* Pawn)
+{
+	const ABendingSparringPartner* Partner = nullptr;
+	for (TActorIterator<ABendingSparringPartner> It(GetWorld()); It; ++It)
+	{
+		Partner = *It;
+		break;
+	}
+	if (!Partner)
+	{
+		return;
+	}
+	const UFont* Medium = GEngine->GetMediumFont();
+	const bool bDuel = Partner->IsDuelActive();
+	const FVector HeadLocation = Partner->GetHeadLocation();
+
+	// Its health over its head: always in a duel, and while it heals after one.
+	if (!Partner->IsDown() && (bDuel || Partner->GetHealthFraction() < 0.999))
+	{
+		const FVector Screen = Project(HeadLocation + FVector(0.0, 0.0, 40.0));
+		if (Screen.Z > 0.0)
+		{
+			const float Width = 90.f * UIScale;
+			const float Height = 9.f * UIScale;
+			const float X = static_cast<float>(Screen.X) - 0.5f * Width;
+			const float Y = static_cast<float>(Screen.Y);
+			const float Fraction = static_cast<float>(Partner->GetHealthFraction());
+			DrawRect(FLinearColor(0.05f, 0.04f, 0.03f, 0.8f), X - 2.f, Y - 2.f, Width + 4.f, Height + 4.f);
+			DrawRect(GetHealthColor(Fraction), X, Y, Width * Fraction, Height);
+		}
+	}
+
+	// Waiting at its post with the player close by: it invites a challenge.
+	if (Partner->IsWaiting() && Pawn && FVector::Dist2D(Pawn->GetActorLocation(), Partner->GetActorLocation()) < SparringInviteRangeCm)
+	{
+		const FVector Screen = Project(HeadLocation + FVector(0.0, 0.0, 30.0));
+		if (Screen.Z > 0.0)
+		{
+			const FString PartnerName = TEXT("Sparring partner");
+			const FString Invitation = TEXT(" \u00B7 hit them to start a duel");
+			const float NameWidth = GetTextWidth(PartnerName, Medium, 1.f);
+			const float Width = NameWidth + GetTextWidth(Invitation, Medium, 1.f);
+			const float X = static_cast<float>(Screen.X) - 0.5f * Width;
+			const float Y = static_cast<float>(Screen.Y) - 28.f * UIScale;
+			DrawRect(PanelColor, X - 10.f * UIScale, Y - 3.f * UIScale, Width + 20.f * UIScale, 26.f * UIScale);
+			DrawLabel(PartnerName, X, Y, PartnerNameColor, Medium);
+			DrawLabel(Invitation, X + NameWidth, Y, TextColor, Medium);
+		}
+	}
+
+	// The duel scoreboard at the top centre, while a duel is on and for a few seconds after.
+	if (!bDuel && GetTimeSeconds() - LastDuelEndSeconds > DuelBoardHoldSeconds)
+	{
+		return;
+	}
+	const UFont* Small = GEngine->GetSmallFont();
+	const float CenterX = 0.5f * static_cast<float>(Canvas->ClipX);
+	const float Width = 340.f * UIScale;
+	const float X = CenterX - 0.5f * Width;
+	const float Y = 22.f * UIScale;
+	DrawRect(PanelColor, X, Y, Width, 82.f * UIScale);
+	const FString Title = bDuel ? TEXT("DUEL") : TEXT("DUEL OVER");
+	DrawLabel(Title, CenterX - 0.5f * GetTextWidth(Title, Small, 1.f), Y + 6.f * UIScale, DimTextColor, Small);
+	const FString Score = FString::Printf(TEXT("You  %d  -  %d  Sparring partner"), Partner->GetPlayerWins(), Partner->GetPartnerWins());
+	DrawLabel(Score, CenterX - 0.5f * GetTextWidth(Score, Medium, 1.1f), Y + 24.f * UIScale, TextColor, Medium, 1.1f);
+	const float BarWidth = Width - 40.f * UIScale;
+	const float BarY = Y + 58.f * UIScale;
+	const float Fraction = static_cast<float>(Partner->GetHealthFraction());
+	DrawRect(FLinearColor(0.05f, 0.04f, 0.03f, 0.8f), X + 20.f * UIScale, BarY, BarWidth, 10.f * UIScale);
+	DrawRect(GetHealthColor(Fraction), X + 20.f * UIScale, BarY, BarWidth * Fraction, 10.f * UIScale);
 }
 
 void AAvatarHUD::DrawLabel(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, float Scale)
@@ -360,6 +500,16 @@ void AAvatarHUD::DrawResources(const APawn* Pawn)
 	const float Width = 320.f * UIScale;
 	const float Height = 18.f * UIScale;
 	const float Y = static_cast<float>(Canvas->ClipY) - 86.f * UIScale;
+	// Health: only the sparring partner's flames take it.
+	if (const UBendingTechniqueComponent* Techniques = Pawn->FindComponentByClass<UBendingTechniqueComponent>())
+	{
+		const double MaxHealth = FMath::Max(Techniques->GetMaxHealth(), 1.0);
+		const float HealthFraction = static_cast<float>(Techniques->GetHealth() / MaxHealth);
+		FLinearColor HealthFill = GetHealthColor(HealthFraction);
+		HealthFill.A = 0.9f;
+		DrawBar(X, Y - 30.f * UIScale, Width, Height, HealthFraction, HealthFill,
+			FString::Printf(TEXT("Health  %.0f / %.0f"), Techniques->GetHealth(), MaxHealth));
+	}
 	DrawBar(X, Y, Width, Height, MaxChi > 0.f ? Chi / MaxChi : 0.f, FLinearColor(0.15f, 0.65f, 1.f, 0.9f),
 		FString::Printf(TEXT("Chi  %.0f / %.0f   (pays for the joules each technique moves)"), Chi, MaxChi));
 	DrawBar(X, Y + 30.f * UIScale, Width, Height, MaxStamina > 0.f ? Stamina / MaxStamina : 0.f, FLinearColor(0.35f, 0.85f, 0.3f, 0.9f),
@@ -505,6 +655,19 @@ void AAvatarHUD::DrawStatus(const APawn* Pawn)
 			DrawLabel(Status, CenterX - 0.5f * GetTextWidth(Status, Medium, 1.f), Y, TextColor, Medium);
 			Y += 24.f * UIScale;
 		}
+		// The guard, and whether a flame arriving now would be parried.
+		if (Techniques->IsDown())
+		{
+			const FString Text = FString::Printf(TEXT("Knocked down: up in %.1f s"), Techniques->GetDownSeconds());
+			DrawLabel(Text, CenterX - 0.5f * GetTextWidth(Text, Medium, 1.f), Y, DownColor, Medium);
+			Y += 24.f * UIScale;
+		}
+		else if (Techniques->IsGuarding())
+		{
+			const FString Text = Techniques->IsParryReady() ? TEXT("Guarding \u00B7 parry ready") : TEXT("Guarding");
+			DrawLabel(Text, CenterX - 0.5f * GetTextWidth(Text, Medium, 1.f), Y, GuardColor, Medium);
+			Y += 24.f * UIScale;
+		}
 	}
 
 	// Mud: the ground under the feet has lost traction.
@@ -580,6 +743,7 @@ void AAvatarHUD::DrawControls()
 		{ TEXT("Mouse"), TEXT("look / aim") },
 		{ TEXT("Space"), TEXT("jump") },
 		{ TEXT("Shift"), TEXT("sprint") },
+		{ TEXT("C (hold)"), TEXT("guard; raise it as a blast lands to parry") },
 		{ TEXT("1 2 3 4"), TEXT("water / earth / fire / air stance") },
 		{ TEXT("LMB RMB Q E F"), TEXT("the stance's techniques (top left)") },
 		{ TEXT("H"), TEXT("hide this panel") },

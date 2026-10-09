@@ -351,6 +351,11 @@ void AAvatarCharacter::EnsureRuntimeInput()
 		ToggleHelpAction = MakeAction(EInputActionValueType::Boolean);
 		MapRuntimeKey(Context, ToggleHelpAction, EKeys::H);
 	}
+	if (!GuardAction)
+	{
+		GuardAction = MakeAction(EInputActionValueType::Boolean);
+		MapRuntimeKey(Context, GuardAction, EKeys::C);
+	}
 	if (!BendingInputConfig)
 	{
 		UBendingInputConfig* Config = NewObject<UBendingInputConfig>(this);
@@ -441,7 +446,7 @@ void AAvatarCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	}
 	if (JumpAction)
 	{
-		Input->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+		Input->BindAction(JumpAction, ETriggerEvent::Started, this, &ThisClass::Input_JumpStarted);
 		Input->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 	}
 	if (SprintAction)
@@ -452,6 +457,11 @@ void AAvatarCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	if (ToggleHelpAction)
 	{
 		Input->BindAction(ToggleHelpAction, ETriggerEvent::Started, this, &ThisClass::Input_ToggleHelp);
+	}
+	if (GuardAction)
+	{
+		Input->BindAction(GuardAction, ETriggerEvent::Started, this, &ThisClass::Input_GuardStarted);
+		Input->BindAction(GuardAction, ETriggerEvent::Completed, this, &ThisClass::Input_GuardCompleted);
 	}
 
 	if (BendingInputConfig)
@@ -477,7 +487,8 @@ void AAvatarCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 void AAvatarCharacter::Input_Move(const FInputActionValue& Value)
 {
 	const FVector2D Axis = Value.Get<FVector2D>();
-	if (!Controller)
+	// Knocked down, the body lies still until it gets up.
+	if (!Controller || Techniques->IsDown())
 	{
 		return;
 	}
@@ -495,6 +506,11 @@ void AAvatarCharacter::Input_Look(const FInputActionValue& Value)
 
 void AAvatarCharacter::Input_BendingPressed(FGameplayTag InputTag)
 {
+	// Guarding or down, no technique starts.
+	if (!Techniques->CanStartTechnique())
+	{
+		return;
+	}
 	Bending->HandleInputPressed(InputTag);
 }
 
@@ -516,6 +532,24 @@ void AAvatarCharacter::Input_SprintStarted()
 void AAvatarCharacter::Input_SprintCompleted()
 {
 	bSprinting = false;
+}
+
+void AAvatarCharacter::Input_JumpStarted()
+{
+	if (!Techniques->IsDown())
+	{
+		Jump();
+	}
+}
+
+void AAvatarCharacter::Input_GuardStarted()
+{
+	Techniques->SetGuardHeld(true);
+}
+
+void AAvatarCharacter::Input_GuardCompleted()
+{
+	Techniques->SetGuardHeld(false);
 }
 
 void AAvatarCharacter::Input_ToggleHelp()
@@ -567,12 +601,21 @@ void AAvatarCharacter::UpdateMovementMode()
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	const EBendingPhase Phase = Bending->GetCurrentPhase();
 	const bool bCasting = Phase == EBendingPhase::Startup || Phase == EBendingPhase::Active || Techniques->IsSustaining();
-	const bool bAiming = Bending->IsMoveActive() || Techniques->IsSustaining() || Techniques->HasWaterWhip() || Techniques->IsHoldingRock();
+	const bool bGuardUp = Techniques->IsGuarding();
+	const bool bAiming = Bending->IsMoveActive() || Techniques->IsSustaining() || Techniques->HasWaterWhip() || Techniques->IsHoldingRock() || bGuardUp;
 
-	// While bending the body turns to the aim and strafes; otherwise it turns to where it runs.
+	// While bending or guarding the body turns to the aim and strafes; otherwise it turns to where it runs.
 	Movement->bOrientRotationToMovement = !bAiming;
 	Movement->bUseControllerDesiredRotation = bAiming;
-	Movement->MaxWalkSpeed = (bSprinting ? SprintSpeed : WalkSpeed) * (bCasting ? CastingSpeedScale : 1.f);
+	// Set from scratch every frame, so the guard's slowdown is gone as soon as the guard drops. No sprinting behind it.
+	Movement->MaxWalkSpeed = (bSprinting && !bGuardUp ? SprintSpeed : WalkSpeed) * (bCasting ? CastingSpeedScale : 1.f) * Techniques->GetMoveSpeedScale();
+
+	// Knocked down, it lies the way it fell: no turning.
+	if (Techniques->IsDown())
+	{
+		Movement->bOrientRotationToMovement = false;
+		Movement->bUseControllerDesiredRotation = false;
+	}
 
 	// On an air scooter the bender rides fast and faces where it goes.
 	if (Techniques->IsRidingAirScooter())
@@ -608,6 +651,26 @@ float AAvatarCharacter::GetAimPitchDegrees() const
 
 float AAvatarCharacter::ComputeCastPose(FAvatarBodyPose& Pose) const
 {
+	// Guarding: forearms crossed before the face.
+	if (Techniques->IsGuarding())
+	{
+		Pose.ArmL = Pose.ArmR = 112.f;
+		Pose.ArmRollL = -30.f;
+		Pose.ArmRollR = 30.f;
+		Pose.SpinePitch = -4.f;
+		Pose.SpineYaw = 0.f;
+		return 1.f;
+	}
+	// Rocked by a hit: a jolt back.
+	if (Techniques->IsFlinching() && !Bending->IsMoveActive())
+	{
+		Pose.SpinePitch = 14.f;
+		Pose.ArmL = Pose.ArmR = 25.f;
+		Pose.ArmRollL = 30.f;
+		Pose.ArmRollR = -30.f;
+		return 0.8f;
+	}
+
 	const UBendingTechniqueMove* Move = Cast<UBendingTechniqueMove>(Bending->GetCurrentMove());
 	EBendingPhase Phase = Bending->GetCurrentPhase();
 	EBendingTechnique Technique = Move ? Move->Technique : EBendingTechnique::None;
@@ -759,7 +822,15 @@ void AAvatarCharacter::UpdateBodyAnimation(float DeltaSeconds)
 
 	// Perched on the air scooter's ball.
 	ScooterLiftCm = FMath::FInterpTo(ScooterLiftCm, Techniques->IsRidingAirScooter() ? 55.f : 0.f, DeltaSeconds, 14.f);
-	BodyRoot->SetRelativeLocation(FVector(0.0, 0.0, CurrentPose.BobCm + ScooterLiftCm));
+
+	// Knocked down: the body lies flat along the way it fell, at the bottom of the capsule, until it gets up.
+	DownWeight = FMath::FInterpTo(DownWeight, Techniques->IsDown() ? 1.f : 0.f, DeltaSeconds, 8.f);
+	FVector FallLocal = GetActorRotation().UnrotateVector(Techniques->GetFallDirection());
+	FallLocal.Z = 0.0;
+	FVector TiltAxis = FVector::CrossProduct(FVector::UpVector, FallLocal.GetSafeNormal());
+	TiltAxis = TiltAxis.IsNearlyZero() ? FVector::RightVector : TiltAxis.GetSafeNormal();
+	const FQuat Tilt(TiltAxis, 1.5 * static_cast<double>(DownWeight));
+	BodyRoot->SetRelativeLocationAndRotation(FVector(0.0, 0.0, CurrentPose.BobCm + ScooterLiftCm - 70.f * DownWeight), Tilt);
 	Spine->SetRelativeRotation(FRotator(CurrentPose.SpinePitch, CurrentPose.SpineYaw, 0.f));
 	HipL->SetRelativeRotation(FRotator(CurrentPose.LegL, 0.f, 0.f));
 	HipR->SetRelativeRotation(FRotator(CurrentPose.LegR, 0.f, 0.f));

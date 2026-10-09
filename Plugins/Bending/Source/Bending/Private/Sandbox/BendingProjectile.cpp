@@ -12,17 +12,37 @@
 #include "GameFramework/Pawn.h"
 #include "Interaction/BendingInteractionSubsystem.h"
 #include "Interaction/ElementalVolumeComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Physics/BendingUnits.h"
 #include "Sandbox/BendingPropActor.h"
 #include "Sandbox/BendingSandboxArena.h"
 #include "Sandbox/BendingSandboxLibrary.h"
+#include "Sandbox/BendingSparringPartner.h"
+#include "Sandbox/BendingTechniqueComponent.h"
 #include "Sim/BendingTechniques.h"
 
 namespace
 {
 	/** Height of a resting flame's centre above the ground, in radii. */
 	constexpr double GroundedFlameLift = 0.55;
+	/** A flame's dense core (this share of its radius) has to reach a fighter; the glow around it only warms. */
+	constexpr double FlameCoreFraction = 0.45;
+	/** The flame mass FlameStrikeDamage is quoted for. */
+	constexpr double FlameStrikeReferenceKg = 0.6;
+	/** A parried flame flies back faster than it came, and never slower than this. */
+	constexpr double ParriedSpeedScale = 1.2;
+	constexpr double ParriedMinSpeedCmS = 1500.0;
+	/** A blocked flame splashes off the guard, up and to one side, at this speed. */
+	constexpr double BlockedSplashSpeedCmS = 450.0;
+
+	FVector ClosestPointOnPawnCore(const FVector& Point, const FVector& A, const FVector& B)
+	{
+		const FVector AB = B - A;
+		const double LengthSquared = AB.SizeSquared();
+		const double T = LengthSquared > UE_SMALL_NUMBER ? FMath::Clamp(FVector::DotProduct(Point - A, AB) / LengthSquared, 0.0, 1.0) : 0.0;
+		return A + AB * T;
+	}
 
 	/** Share of the simulated radius drawn: flame as its bright core, air as a faint core that does not hide the view. */
 	double GetVisualRadiusFraction(EBendingProjectileKind Kind)
@@ -116,6 +136,7 @@ void ABendingProjectile::InitProjectile(EBendingProjectileKind InKind, const Ben
 	UWorld* World = GetWorld();
 	Interaction = World ? World->GetSubsystem<UBendingInteractionSubsystem>() : nullptr;
 	Arena = ABendingSandboxArena::Find(World);
+	SparringPartner = ABendingSparringPartner::Find(World);
 
 	Mesh->SetStaticMesh(UBendingSandboxLibrary::LoadBasicShape(TEXT("Sphere")));
 	Mesh->SetCastShadow(Kind == EBendingProjectileKind::Water || Kind == EBendingProjectileKind::IceShard);
@@ -276,6 +297,10 @@ void ABendingProjectile::Tick(float DeltaSeconds)
 		{
 			return;
 		}
+		if (Kind == EBendingProjectileKind::Fire && !bGrounded && StrikeFighters(Location, State))
+		{
+			return;
+		}
 	}
 
 	SetActorLocation(Location);
@@ -310,8 +335,94 @@ bool ABendingProjectile::StrikeAlongPath(const FVector& From, const FVector& To,
 	{
 		Prop->TakeHit(IceShardDamage, VelocityCmS);
 	}
+	else if (ABendingSparringPartner* Partner = Cast<ABendingSparringPartner>(Hit.GetActor()))
+	{
+		// The sparring partner moves itself: the dagger's momentum shoves it, and the blade cuts.
+		Partner->Shove(VelocityCmS * State.MassKg);
+		Partner->TakeHit(IceShardDamage, VelocityCmS);
+	}
 	Destroy();
 	return true;
+}
+
+bool ABendingProjectile::StrikeFighters(const FVector& Location, const FElementalVolumeState& State)
+{
+	if (bStruck || State.MassKg <= 0.0)
+	{
+		return false;
+	}
+	// The dense core has to reach the body; damage grows faster than the flame's mass.
+	const double CoreCm = FlameCoreFraction * State.RadiusCm;
+	const double Share = State.MassKg / FlameStrikeReferenceKg;
+	const double Damage = ABendingSparringPartner::FlameStrikeDamage * Share * FMath::Sqrt(Share);
+	const FVector Direction = FVector(VelocityCmS.X, VelocityCmS.Y, 0.0).GetSafeNormal();
+
+	// The player's flame against the sparring partner.
+	if (!bFromSparringPartner)
+	{
+		ABendingSparringPartner* Partner = SparringPartner.Get();
+		if (Partner && Partner->IsStruckBy(Location, CoreCm))
+		{
+			bStruck = true;
+			Partner->TakeFlameDamage(Damage, Direction);
+		}
+		return false;
+	}
+
+	// The sparring partner's flame against the player: the core reaching the pawn's capsule.
+	APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
+	UBendingTechniqueComponent* Techniques = Player ? Player->FindComponentByClass<UBendingTechniqueComponent>() : nullptr;
+	if (!Techniques)
+	{
+		return false;
+	}
+	const double PawnRadius = Player->GetSimpleCollisionRadius();
+	const double PawnHalfHeight = Player->GetSimpleCollisionHalfHeight();
+	const FVector PawnCenter = Player->GetActorLocation();
+	const FVector PawnAxis(0.0, 0.0, FMath::Max(PawnHalfHeight - PawnRadius, 0.0));
+	const FVector OnCore = ClosestPointOnPawnCore(Location, PawnCenter - PawnAxis, PawnCenter + PawnAxis);
+	if (FVector::Dist(OnCore, Location) > PawnRadius + CoreCm)
+	{
+		return false;
+	}
+	bStruck = true;
+	switch (Techniques->TakeFlameHit(Location, Damage, Direction))
+	{
+	case EBendingFlameHit::Parried:
+	{
+		// A perfect guard: turned back at whoever sent it, faster than it came. It is the player's flame now.
+		const ABendingSparringPartner* Partner = SparringPartner.Get();
+		FVector Back = Partner ? (Partner->GetChestLocation() - Location).GetSafeNormal() : -VelocityCmS.GetSafeNormal();
+		if (Back.IsNearlyZero())
+		{
+			Back = Player->GetActorForwardVector();
+		}
+		VelocityCmS = Back * FMath::Max(ParriedSpeedScale * VelocityCmS.Size(), ParriedMinSpeedCmS);
+		bFromSparringPartner = false;
+		bStruck = false;
+		AgeSeconds = 0.0;
+		SetOwner(Player);
+		return false;
+	}
+
+	case EBendingFlameHit::Blocked:
+	{
+		// It splashes off the guard, up and to one side.
+		const FVector Across(-Direction.Y, Direction.X, 0.0);
+		VelocityCmS = (Direction * -0.3 + FVector::UpVector * 0.7 + Across * (FMath::RandBool() ? 0.6 : -0.6)) * BlockedSplashSpeedCmS;
+		return false;
+	}
+
+	case EBendingFlameHit::Hit:
+		// A clean hit: the flame bursts against them.
+		Destroy();
+		return true;
+
+	case EBendingFlameHit::Ignored:
+		// Down or just up: it passes by.
+		break;
+	}
+	return false;
 }
 
 bool ABendingProjectile::HandleGroundContact(FVector& Location, const FElementalVolumeState& State)

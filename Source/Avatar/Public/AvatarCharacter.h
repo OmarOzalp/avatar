@@ -75,6 +75,9 @@ protected:
 	void Input_SelectStance(EBendingElement Element);
 	void Input_SprintStarted();
 	void Input_SprintCompleted();
+	void Input_JumpStarted();
+	void Input_GuardStarted();
+	void Input_GuardCompleted();
 	void Input_ToggleHelp();
 
 	/** Scales ground friction, braking and acceleration by the mud under the feet. */
@@ -86,7 +89,10 @@ protected:
 	/** Grants one discipline per element built from the kernel's technique table, unless disciplines were assigned. */
 	void GrantSandboxDisciplines();
 
-	/** Faces the aim while bending (strafing), the direction of travel otherwise; slows down while casting. */
+	/**
+	 * Faces the aim while bending or guarding (strafing), the direction of travel otherwise; slows down while casting
+	 * or guarding, and lies still while knocked down.
+	 */
 	void UpdateMovementMode();
 
 	void UpdateBodyAnimation(float DeltaSeconds);
@@ -176,6 +182,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleHelpAction;
 
+	/** Held: guard against the sparring partner's flames (raised just as one arrives, it parries). */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> GuardAction;
+
 	/** Move inputs (Light/Heavy/Special/Utility/Signature) and stance selection. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UBendingInputConfig> BendingInputConfig;
@@ -203,6 +213,8 @@ private:
 	float CastWeight = 0.f;
 	/** Body lift while perched on an air scooter (cm). */
 	float ScooterLiftCm = 0.f;
+	/** 0 standing, 1 lying on the ground (knocked down). */
+	float DownWeight = 0.f;
 	EBendingElement TintedElement = EBendingElement::None;
 	bool bBodyTinted = false;
 	bool bSprinting = false;

@@ -6,6 +6,7 @@
 #include "BendingSandboxArena.generated.h"
 
 class ABendableTerrain;
+class ABendingSparringPartner;
 class APlayerStart;
 class UBendingInteractionSubsystem;
 class UInstancedStaticMeshComponent;
@@ -13,9 +14,9 @@ class UStaticMeshComponent;
 
 /**
  * The training ground, generated from BendingSim::GetTrainingGroundLayout() (the same place the browser sandbox
- * builds): bendable terrain, ponds, stones, boulders, soil clods, dummies, braziers, ice blocks, a player start, and
- * daylight when the level has none. It also draws what has no actor of its own: steam clouds (free gas volumes of
- * the interaction simulation) and wet ground (its moisture patches).
+ * builds): bendable terrain, ponds, stones, boulders, soil clods, dummies, braziers, ice blocks, the sparring partner
+ * at its post, a player start, and daylight when the level has none. It also draws what has no actor of its own: steam
+ * clouds (free gas volumes of the interaction simulation) and wet ground (its moisture patches).
  *
  * AAvatarGameMode spawns and builds one when the level has none; one placed in a level builds itself on BeginPlay.
  */
@@ -41,6 +42,7 @@ public:
 	ABendableTerrain* GetTerrainActor() const;
 	BendingSim::FTerrain* GetTerrain() const;
 	APlayerStart* GetPlayerStart() const;
+	ABendingSparringPartner* GetSparringPartner() const;
 
 	/** The live layout: pond water goes down as benders draw from it. */
 	const BendingSim::FArenaLayout& GetLayout() const { return Layout; }
@@ -85,6 +87,8 @@ private:
 	void SpawnTerrain();
 	void SpawnPonds();
 	void SpawnProps();
+	/** The firebender who waits in the ring to spar, at the layout's post, facing the player start. */
+	void SpawnSparringPartner();
 	void SpawnPlayerStart();
 	void SpawnLighting();
 	void UpdateSteam(const UBendingInteractionSubsystem& Interaction);
@@ -97,6 +101,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<APlayerStart> PlayerStart;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ABendingSparringPartner> SparringPartner;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AActor>> Props;

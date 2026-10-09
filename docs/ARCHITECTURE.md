@@ -196,11 +196,14 @@ browser build (`Tools/Sandbox3D`, WebAssembly + three.js) and the Unreal build (
 | `BendingArena.h` | The training ground: a 96 × 96 m terrain (241² samples, 40 cm cells) with a plaza, hills, two pond basins and a boundary ridge, the prop placements (stones, rocks, boulders, soil clods, dummies, braziers, ice blocks, banners, stone lanterns, straw bales, crates, water barrels), each prop's physical volume, how it burns, how hard a blow smashes it, the water it holds, and the player start. |
 | `BendingCombustion.h` — `FCombustible` | Burning props. A prop soaks up heat from the Fire volumes within its reach (W per kelvin above ambient, scaled by flame size) and leaks it away over a few seconds; past its ignition heat it catches and keeps an **owned Fire volume** burning on itself, topped up to its flame temperature from its fuel, for its burn time. That flame is ordinary fire in the world: water boils on it, wind feeds it, and it heats the props beside it, so fire spreads. Enough water within reach (enough to boil away two seconds of the fire's heat) douses it at once and leaves it wet for a few seconds; a flame lost with no water about (merged into a passing fireball) flares up again. |
 
-### Sparring partner and guard (browser build, `Tools/Sandbox3D`)
+### Sparring partner and guard (both builds)
 
-`FSandbox` adds a firebender who spars with the player (`FRival`, `ERivalState`). Its body is an ordinary body in the
-simulation (`EBodyKind::Rival`, a 70 kg capsule the size of the player), so blasts shove it, fire hurts it and a
-knockout tips it over like a dummy. Its behaviour is a state machine:
+A firebender spars with the player. Its mind is the kernel's `FSparringBrain` (`Sim/BendingSparring.h`), so both
+builds run the same brain: the owner feeds it what it sees each frame, passes on the damage that reaches its body,
+offers it the throws coming at it, and carries out its orders (where to move and face, which flame to bend). In the
+browser `FSandbox` owns it (`FRival`); in Unreal, `ABendingSparringPartner` does. Its body is a 70 kg capsule the size
+of the player in the simulation, so blasts shove it, fire hurts it and a knockout tips it over like a dummy. Its
+behaviour is a state machine:
 
 | State | What it does |
 |---|---|
@@ -219,7 +222,9 @@ fighter does `12 × (m / 0.6 kg)^1.5`; lingering fire (burning ground, props, a 
 25 kJ of heating. The player has 100 health, hurt only by the partner's attacks. Guard (C) slows them to 35% and stops
 new moves; a guard takes 20% of a flame's damage and 10 stamina per block, and one raised within 0.2 s of the hit
 parries: the flame flies back at the partner, 20% faster. A guard can be raised again 0.3 s after it is dropped, so it
-cannot be tapped into a permanent parry. Knocked down, the player lies still for 3 s and gets up whole.
+cannot be tapped into a permanent parry. Knocked down, the player lies still for 3 s and gets up whole. In the browser
+build the player can also roll (V): 0.36 s at 8.5 m/s for 20 stamina, the way they are moving or back from the camera,
+and a flame passes straight through a roll.
 
 ### Unreal sandbox (`Plugins/Bending/.../Sandbox`, `Source/Avatar`)
 
@@ -230,17 +235,18 @@ table, and the HUD draws on the canvas.
 | Class | Role |
 |---|---|
 | `AAvatarGameMode` | Spawns and builds an `ABendingSandboxArena` in `InitGame` when the level has none, and picks its player start. The default map is the engine's empty `Entry` map. |
-| `ABendingSandboxArena` | Builds the layout: terrain, pond water, props, player start, and sun, sky and fog when the level has no directional light. Draws steam clouds (free gas volumes) and wet ground (moisture patches) with instanced meshes. Ponds give and take back water. |
+| `ABendingSandboxArena` | Builds the layout: terrain, pond water, props, the sparring partner at its post (facing the player start), player start, and sun, sky and fog when the level has no directional light. Draws steam clouds (free gas volumes) and wet ground (moisture patches) with instanced meshes. Ponds give and take back water. |
 | `ABendableTerrain` | Owns the `FTerrain`. Renders it as 32 × 32-cell procedural mesh chunks with vertex colours (grass, earth, rock, sand, and fresh soil wherever it was bent). Rebuilds only dirty chunks each tick. Collision lives in a hidden second section, re-cooked at most every 0.1 s. Wakes rigid bodies whose ground moved. |
-| `AAvatarCharacter` | A basic-shape body (about 22 parts) with procedural walk, jump and casting poses (including the signature moves and riding the air scooter), tinted by stance. Builds its Enhanced Input objects at runtime, grants the four sandbox disciplines, and scales friction, braking and acceleration by the ground's traction (mud). |
+| `AAvatarCharacter` | A basic-shape body (about 22 parts) with procedural walk, jump and casting poses (including the signature moves and riding the air scooter), tinted by stance. Builds its Enhanced Input objects at runtime (Guard on C), grants the four sandbox disciplines, and scales friction, braking and acceleration by the ground's traction (mud). Guarding it faces the aim at 35% speed with its forearms crossed; knocked down it lies along the way it fell and ignores movement, jumping and techniques. |
 | `UBendingTechniqueMove` / `UBendingTechniqueAbility` | One move per technique, built at runtime (`UBendingSandboxLibrary::CreateTechniqueDisciplines`), and one ability class for all of them. GAS and `UBendingComponent` run them like any move (costs, frame-data phases, input buffer, cancel windows), and the ability forwards each phase to the technique component. |
-| `UBendingTechniqueComponent` | Does the physics of each technique: aim (camera trace, falling back to a terrain raycast), the whip, rocks pulled out of the ground (at most 10 thrown rocks; the oldest crumbles back into the soil), walls, pillars and pits, fire, air, the air jump, and the signature moves: ice daggers frozen from the whip's water, the earthquake's falloff throw, the ring of fire, the jet dash, the air scooter (a held ride with drag upkeep) and the tornado. Every joule goes through `SpendChiForEnergy`, and the effect is scaled by what was granted. |
+| `UBendingTechniqueComponent` | Does the physics of each technique: aim (camera trace, falling back to a terrain raycast), the whip, rocks pulled out of the ground (at most 10 thrown rocks; the oldest crumbles back into the soil), walls, pillars and pits, fire, air, the air jump, and the signature moves: ice daggers frozen from the whip's water, the earthquake's falloff throw, the ring of fire, the jet dash, the air scooter (a held ride with drag upkeep) and the tornado. Every joule goes through `SpendChiForEnergy`, and the effect is scaled by what was granted. It also keeps the bender's health and guard against the sparring partner, with the browser build's numbers: `TakeFlameHit` parries (+10 chi), blocks (20% through, 10 stamina, the guard breaks at 0) or takes a clean hit (330 cm/s knockback, a flinch); knocked down at 0 health for 3 s, up whole; 25 health/s back out of a duel. Chi and stamina change through the same instant cost effect as move costs. |
 | `ABendingTornadoActor` | The tornado: swirls, pulls and lifts loose props for its lifetime (lift fades above 150 kg), steers flame, water and air into its spiral, turns into a fire tornado when it holds flame, and sheds air parcels that feed fire. Drawn as spiralling strands of stretched spheres with whirling debris. |
 | `ABendingQuakeActor` | The earthquake's look: two rings of rock punch up as the wave passes, overshoot and sink back. |
 | `ABendingWaterWhipActor` | Owns an `FWaterWhip` whose segments live in the interaction subsystem's `FSimWorld`. Per frame: `PostStep` → `SetBodyCenter` and `SetControl` from the bender → `PreStep`, then the subsystem steps the world at the end of the frame. Spray from the snap becomes a water projectile that slows in the air. The stream is drawn as small overlapping spheres along a Catmull-Rom curve. Fast water sheds droplets, and the stream splashes where it slaps the ground. |
-| `ABendingProjectile` | Bent fire, air, water or ice in flight with a `UElementalVolumeComponent`. Applies reaction impulses as `Δv = J/m`. On landing a flame burns on the ground, a water ball soaks in (mud) or rejoins a pond, and air flows along the ground. An ice dagger sweeps its path, puts its momentum into the first body it hits, and shatters. |
+| `ABendingProjectile` | Bent fire, air, water or ice in flight with a `UElementalVolumeComponent`. Applies reaction impulses as `Δv = J/m`. On landing a flame burns on the ground, a water ball soaks in (mud) or rejoins a pond, and air flows along the ground. An ice dagger sweeps its path, puts its momentum into the first body it hits, and shatters. A flame in flight whose dense core (0.45 of its radius) reaches a fighter strikes once, for `12 × (m / 0.6 kg)^1.5`: the player's strike the sparring partner, the partner's (`bFromSparringPartner`) strike the player's capsule. A parried one turns back at the partner's chest and changes hands; a blocked one splashes up off the guard. |
 | `ABendingPropActor` | Props with their kernel volume. Rocks, clods and dummies simulate physics and receive reaction impulses. Braziers keep a flame burning (water puts it out, flame relights it). Ice blocks melt into the soil. Banners, straw, crates, dummies and lanterns burn through `FCombustible` on the subsystem's world (char, burn away, are put out). Crates and barrels smash on hard blows (kernel impulses, physics hits, quakes), spilling a barrel's water and a burning crate's fire. Dummies have health and a knockout; `OnPropHit` feeds the HUD's numbers. |
-| `AAvatarHUD` | Damage numbers, K.O. callouts, health bars over hurt dummies and a combo counter. Crosshair, chi and stamina, the stance's five techniques, a Startup / Active / Recovery frame bar with the cancel window, a feed of what each technique did and every reaction, mud traction, and the controls panel. |
+| `ABendingSparringPartner` | The sparring partner: an `FSparringBrain` in a body of basic shapes in Fire Nation red, with a 70 kg Earth capsule volume and a Pawn-profile collision capsule (it blocks the player and the aim, ice daggers hit it). It moves itself: steers toward the brain's velocity, falls, stands on the terrain, slides along solid props, and refuses rises over 40 cm, ponds and the edge of the field (`OnBlocked`). Reaction impulses shove it (`Δv = J / 70 kg`, 15 damage per m/s); props flung into it knock it like body meets body; fire it stands in burns it (1 point per 25 kJ); thrown fire and rocks are offered to the brain once each. It bends its flames as Fire Blast projectiles born clear of its body, poses by state (hands behind its back, the bow, fists up, the glowing wind-up fist, punches, crossed guard, stagger, lying down), and reports hits and duel callouts through `OnSparringCallout`. |
+| `AAvatarHUD` | Damage numbers, K.O. callouts, health bars over hurt dummies and a combo counter. Crosshair, health, chi and stamina, the stance's five techniques, a Startup / Active / Recovery frame bar with the cancel window, a feed of what each technique did and every reaction, mud traction, and the controls panel. The guard (and when a parry is ready) under the crosshair; the sparring partner's health bar over its head, its invitation while it waits, a duel scoreboard at the top centre, and DUEL / PARRY / YOU WIN / DEFEATED / DOWN callouts. |
 
 The interaction subsystem tells the two kinds of owned volume apart. A slot whose owner pointer is explicitly null
 belongs to a native owner (the whip), which consumes its own results. A *stale* pointer means a component died
@@ -266,9 +272,12 @@ builds both WebAssembly modules and checks them against the native results.
   - the whip against fire;
   - freeze and thaw, and partial freezing by mass when short of chi;
   - release, following a sprinting bender, and determinism.
-- **3D sandbox (119 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
+- **Sparring partner (31 checks):** the brain alone, fed senses by hand: waiting and the challenge, the bow, attacks
+  only with a clear shot and never at a player who is down, bursts up close, the per-blow cap, stagger and poise,
+  guarding and dodging throws, the knockout, getting up and walking back, the leash, determinism.
+- **3D sandbox (124 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
   jumping, every technique, water putting out fire, burning, smashing and soaking props, dummy health and knockouts,
-  the sparring partner (waiting, challenged, attacking, circling), guard and parry, winning and losing a duel, events
+  the sparring partner (waiting, challenged, attacking, circling), guard and parry, the dodge roll, winning and losing a duel, events
   that are never both a reaction and an effect, chi, determinism and cost.
 - **WebAssembly parity:** both freestanding wasm builds replay their sessions and must match the native digests exactly.
 
@@ -392,6 +401,13 @@ What to check first if something looks wrong:
   whip are instanced meshes tinted with `BasicShapeMaterial`. If that material is not flagged for instanced static
   meshes, the editor compiles the permutation on the fly, but a packaged build draws them with the default material.
   The fix is a project copy of the material with the flag set.
+- **The sparring partner** is the newest code. The parts most likely to need a fix: its kinematic collision capsule
+  (`Pawn` profile, moved with `SetActorLocation`), the `SweepMultiByObjectType` clear-shot test and the `MakeCapsule`
+  sweep that stops it at solid props, the `ConstructorHelpers` meshes in its constructor, the `FQuat` tilt that lays a
+  knocked-down body flat (if one falls forward instead of back, negate the angle), and the chi and stamina changes
+  `UBendingTechniqueComponent` makes through `UBendingCostEffect`. A prop flung into it is found by proximity
+  (`ABendingSparringPartner::TickBlows`); if rocks pass through it or hit twice, tune the reach or
+  `PartnerBlowContactS` there.
 - **CommonUI warnings at startup**: the plugin is still enabled in `Avatar.uproject`, but the sandbox does not use it
   and no longer sets its viewport client. Disable the plugin if its warnings get in the way.
 

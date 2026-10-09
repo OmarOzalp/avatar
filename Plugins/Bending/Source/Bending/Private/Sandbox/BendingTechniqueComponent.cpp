@@ -1,5 +1,10 @@
 #include "Sandbox/BendingTechniqueComponent.h"
 
+#include "Abilities/BendingGameplayEffects.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
+#include "Attributes/BendingAttributeSet.h"
+#include "BendingGameplayTags.h"
 #include "BendingLog.h"
 #include "BendingSettings.h"
 #include "CollisionQueryParams.h"
@@ -21,6 +26,7 @@
 #include "Sandbox/BendingQuakeActor.h"
 #include "Sandbox/BendingSandboxArena.h"
 #include "Sandbox/BendingSandboxLibrary.h"
+#include "Sandbox/BendingSparringPartner.h"
 #include "Sandbox/BendingTechniqueMove.h"
 #include "Sandbox/BendingTornadoActor.h"
 #include "Sandbox/BendingWaterWhipActor.h"
@@ -51,6 +57,19 @@ namespace
 	constexpr double JetFlameTemperatureK = 1300.0;
 	/** Air Scooter: the ball under the feet (radius) and how high it lifts the body. */
 	constexpr double ScooterBallRadiusCm = 35.0;
+	/** A clean hit rocks the bender (slowed) this long; a broken guard longer, and it cannot go up again for a while. */
+	constexpr double HitFlinchS = 0.3;
+	constexpr double GuardBreakFlinchS = 0.8;
+	constexpr double GuardBreakCooldownS = 1.0;
+	/** Back on their feet, the bender cannot be hurt for this long. */
+	constexpr double GetUpProtectS = 1.5;
+	/** Knocked down: thrown back and up. */
+	constexpr double KnockdownSpeedCmS = 380.0;
+	constexpr double KnockdownLiftCmS = 260.0;
+	/** A blocked flame shoves a third as hard as a clean hit. */
+	constexpr double BlockedKnockbackScale = 0.35;
+	/** Chi a perfect guard gives back. */
+	constexpr double ParryChi = 10.0;
 
 	const FLinearColor InfoColor(0.85f, 0.92f, 1.f);
 	const FLinearColor WarningColor(1.f, 0.72f, 0.3f);
@@ -1003,8 +1022,9 @@ void UBendingTechniqueComponent::TickHolds(float DeltaSeconds)
 	const double Now = GetWorldTime();
 	for (int32 Index = Holds.Num() - 1; Index >= 0; --Index)
 	{
-		const bool bHeld = Bending && Bending->IsInputHeld(Holds[Index].InputTag);
-		const bool bTap = Now - Holds[Index].StartTimeSeconds < Holds[Index].MinSeconds;
+		// Knocked down, the bender lets go of everything.
+		const bool bHeld = DownS <= 0.0 && Bending && Bending->IsInputHeld(Holds[Index].InputTag);
+		const bool bTap = DownS <= 0.0 && Now - Holds[Index].StartTimeSeconds < Holds[Index].MinSeconds;
 		if ((bHeld || bTap) && SustainHold(Holds[Index], DeltaSeconds))
 		{
 			continue;
@@ -1141,6 +1161,7 @@ void UBendingTechniqueComponent::TickComponent(float DeltaTime, ELevelTick TickT
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	UpdateGuard(DeltaTime);
 	UpdateAim();
 	UpdateHand(DeltaTime);
 	TickFireJet(DeltaTime);
@@ -1320,6 +1341,188 @@ void UBendingTechniqueComponent::AddMessage(const FString& Text, const FLinearCo
 void UBendingTechniqueComponent::AddOutOfChiMessage()
 {
 	AddMessage(TEXT("Out of chi"), WarningColor);
+}
+
+// ---------------------------------------------------------------------------------------------------- Health, guard and parry
+
+void UBendingTechniqueComponent::SetGuardHeld(bool bPressed)
+{
+	bGuardHeld = bPressed;
+}
+
+float UBendingTechniqueComponent::GetMoveSpeedScale() const
+{
+	return static_cast<float>((bGuarding ? GuardSpeedScale : 1.0) * (FlinchS > 0.0 ? 0.5 : 1.0));
+}
+
+void UBendingTechniqueComponent::UpdateGuard(float DeltaSeconds)
+{
+	FlinchS = FMath::Max(FlinchS - DeltaSeconds, 0.0);
+	ProtectS = FMath::Max(ProtectS - DeltaSeconds, 0.0);
+	GuardCooldownS = FMath::Max(GuardCooldownS - DeltaSeconds, 0.0);
+	if (DownS > 0.0)
+	{
+		bGuarding = false;
+		DownS -= DeltaSeconds;
+		if (DownS <= 0.0)
+		{
+			// Back on their feet, whole, and safe for a moment.
+			DownS = 0.0;
+			Health = MaxHealth;
+			ProtectS = GetUpProtectS;
+			AddMessage(TEXT("Back on your feet"), InfoColor);
+		}
+		return;
+	}
+
+	// The guard goes up only between moves: not while casting, holding, riding or dashing, and not out of stamina.
+	const UBendingComponent* Bending = GetBendingComponent();
+	const bool bFree = !(Bending && Bending->IsMoveActive()) && Holds.Num() == 0 && !bAirScooter && DashRemainingS <= 0.0 && GetStamina() > 0.0;
+	if (bGuardHeld && bFree && (bGuarding || GuardCooldownS <= 0.0))
+	{
+		GuardTimeS = bGuarding ? GuardTimeS + DeltaSeconds : 0.0;
+		bGuarding = true;
+	}
+	else if (bGuarding)
+	{
+		bGuarding = false;
+		GuardCooldownS = GuardRecastS;
+	}
+
+	// Out of a duel, health comes back.
+	const ABendingSparringPartner* Partner = GetSparringPartner();
+	if (!(Partner && Partner->IsDuelActive()))
+	{
+		Health = FMath::Min(Health + RestHealPerS * DeltaSeconds, MaxHealth);
+	}
+}
+
+EBendingFlameHit UBendingTechniqueComponent::TakeFlameHit(const FVector& LocationCm, double Damage, const FVector& Direction)
+{
+	if (DownS > 0.0 || ProtectS > 0.0)
+	{
+		return EBendingFlameHit::Ignored;
+	}
+	// A guard only works facing the flame.
+	const FVector Forward = GetOwner()->GetActorForwardVector();
+	const FVector Facing = FVector(Forward.X, Forward.Y, 0.0).GetSafeNormal();
+	const bool bFacing = FVector::DotProduct(Facing, -Direction) > 0.2;
+	if (bGuarding && bFacing && GuardTimeS <= ParryWindowS)
+	{
+		// A perfect guard: the flame flies back at whoever sent it (ABendingProjectile turns it), and chi flows back.
+		AddResources(ParryChi, 0.0);
+		ABendingSparringPartner::OnSparringCallout.Broadcast(EBendingSparringCallout::Parried, LocationCm, 0.0);
+		AddMessage(TEXT("Perfect guard! The blast flies back"), InfoColor);
+		return EBendingFlameHit::Parried;
+	}
+	if (bGuarding && bFacing)
+	{
+		// Blocked: the flame splashes off the guard, a little gets through, and it costs stamina.
+		const double Through = Damage * BlockDamageScale;
+		AddResources(0.0, -BlockStamina);
+		ABendingSparringPartner::OnSparringCallout.Broadcast(EBendingSparringCallout::Blocked, LocationCm, Through);
+		HurtBender(Through, Direction, BlockedKnockbackScale * FlameKnockbackCmS, true);
+		if (bGuarding && GetStamina() <= 0.0)
+		{
+			bGuarding = false;
+			GuardCooldownS = GuardBreakCooldownS;
+			FlinchS = GuardBreakFlinchS;
+			AddMessage(TEXT("Guard broken: out of stamina"), WarningColor);
+		}
+		return EBendingFlameHit::Blocked;
+	}
+	// A clean hit: the flame bursts against them.
+	HurtBender(Damage, Direction, FlameKnockbackCmS, false);
+	return EBendingFlameHit::Hit;
+}
+
+void UBendingTechniqueComponent::HurtBender(double Damage, const FVector& Direction, double KnockbackCmS, bool bBlocked)
+{
+	if (DownS > 0.0 || ProtectS > 0.0 || Damage <= 0.0)
+	{
+		return;
+	}
+	AActor* Owner = GetOwner();
+	ACharacter* Character = Cast<ACharacter>(Owner);
+	const double Dealt = FMath::Min(Damage, Health);
+	Health -= Dealt;
+	const FVector Push = FVector(Direction.X, Direction.Y, 0.0).GetSafeNormal();
+	if (Character && KnockbackCmS > 0.0 && !Push.IsNearlyZero())
+	{
+		Character->LaunchCharacter(Push * KnockbackCmS, false, false);
+	}
+	// A blocked hit is reported as the block; only a clean hit rocks them.
+	if (!bBlocked)
+	{
+		FlinchS = FMath::Max(FlinchS, HitFlinchS);
+		ABendingSparringPartner::OnSparringCallout.Broadcast(EBendingSparringCallout::PlayerHit, Owner->GetActorLocation() + FVector(0.0, 0.0, 50.0), Dealt);
+	}
+	if (Health > 1e-6)
+	{
+		return;
+	}
+
+	// Knocked down: flat on their back for a few seconds, then up again whole. Held techniques let go (TickHolds).
+	Health = 0.0;
+	DownS = PlayerDownSeconds;
+	bGuarding = false;
+	DashRemainingS = 0.0;
+	if (Push.IsNearlyZero())
+	{
+		const FVector Forward = Owner->GetActorForwardVector();
+		FallDirection = -FVector(Forward.X, Forward.Y, 0.0).GetSafeNormal();
+	}
+	else
+	{
+		FallDirection = Push;
+	}
+	if (Character)
+	{
+		Character->LaunchCharacter(FallDirection * KnockdownSpeedCmS + FVector(0.0, 0.0, KnockdownLiftCmS), true, true);
+	}
+	ABendingSparringPartner::OnSparringCallout.Broadcast(EBendingSparringCallout::PlayerDown, Owner->GetActorLocation(), 0.0);
+	if (ABendingSparringPartner* Partner = GetSparringPartner(); Partner && Partner->IsDuelActive())
+	{
+		Partner->OnPlayerKnockedDown();
+	}
+}
+
+void UBendingTechniqueComponent::AddResources(double ChiDelta, double StaminaDelta)
+{
+	// The same instant effect move costs use, so the attribute set clamps the result.
+	UAbilitySystemComponent* OwnerAbilities = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner());
+	if (!OwnerAbilities || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+	FGameplayEffectContextHandle Context = OwnerAbilities->MakeEffectContext();
+	Context.AddSourceObject(this);
+	const FGameplayEffectSpecHandle Spec = OwnerAbilities->MakeOutgoingSpec(UBendingCostEffect::StaticClass(), 1.f, Context);
+	if (!Spec.IsValid())
+	{
+		return;
+	}
+	Spec.Data->SetSetByCallerMagnitude(BendingTags::SetByCaller_Bending_Chi, static_cast<float>(ChiDelta));
+	Spec.Data->SetSetByCallerMagnitude(BendingTags::SetByCaller_Bending_Stamina, static_cast<float>(StaminaDelta));
+	OwnerAbilities->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+}
+
+double UBendingTechniqueComponent::GetStamina() const
+{
+	const UAbilitySystemComponent* OwnerAbilities = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner());
+	bool bFound = false;
+	const float StaminaLeft = OwnerAbilities ? OwnerAbilities->GetGameplayAttributeValue(UBendingAttributeSet::GetStaminaAttribute(), bFound) : 0.f;
+	// No stamina pool on this owner: the guard never tires.
+	return bFound ? static_cast<double>(StaminaLeft) : UE_BIG_NUMBER;
+}
+
+ABendingSparringPartner* UBendingTechniqueComponent::GetSparringPartner() const
+{
+	if (!CachedPartner.IsValid())
+	{
+		CachedPartner = ABendingSparringPartner::Find(GetWorld());
+	}
+	return CachedPartner.Get();
 }
 
 // ---------------------------------------------------------------------------------------------------- Helpers

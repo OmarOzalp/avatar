@@ -11,6 +11,7 @@
 class ABendingProjectile;
 class ABendingPropActor;
 class ABendingSandboxArena;
+class ABendingSparringPartner;
 class ABendingTornadoActor;
 class ABendingWaterWhipActor;
 class UBendingComponent;
@@ -26,6 +27,19 @@ struct FBendingTechniqueMessage
 	double TimeSeconds = 0.0;
 };
 
+/** What a flame of the sparring partner's did when it reached the bender. */
+enum class EBendingFlameHit : uint8
+{
+	/** Down or just back up: it passes by. */
+	Ignored,
+	/** A clean hit: the flame bursts against them. */
+	Hit,
+	/** The guard took it: a little gets through, it costs stamina, and the flame splashes off. */
+	Blocked,
+	/** A perfect guard: the flame flies back at whoever sent it. */
+	Parried
+};
+
 /**
  * Executes the kernel's sandbox techniques for a bender. UBendingTechniqueAbility forwards each move phase here;
  * this component turns it into matter: it draws and drives the water whip, pulls rocks out of the terrain, moves
@@ -34,6 +48,10 @@ struct FBendingTechniqueMessage
  *
  * Held techniques (Raise / Lower Ground, Flame Stream, Gust, Ground Flame, Air Scooter) start on their active frame
  * and keep going while the move's input stays held, independent of when the ability itself ends.
+ *
+ * It also keeps the bender's health and guard against the sparring partner (ABendingSparringPartner), as the browser
+ * sandbox does: only the partner's flames hurt; a guard held (C) takes most of a flame for stamina, and one raised just
+ * as a flame arrives parries it back; knocked down, the bender lies still for a few seconds and gets up whole.
  */
 UCLASS(ClassGroup = (Bending), meta = (BlueprintSpawnableComponent))
 class BENDING_API UBendingTechniqueComponent : public UActorComponent
@@ -99,6 +117,49 @@ public:
 
 	const TArray<FBendingTechniqueMessage>& GetMessages() const { return Messages; }
 	void AddMessage(const FString& Text, const FLinearColor& Color = FLinearColor::White);
+
+	// ---------------------------------------------------------------- Health, guard and parry
+
+	/** The guard input (C) went down or up; the guard rises once the bender is free to raise it. */
+	void SetGuardHeld(bool bPressed);
+
+	/** A flame of the sparring partner's reached the bender: parried, blocked or a clean hit (and its damage taken). */
+	EBendingFlameHit TakeFlameHit(const FVector& LocationCm, double Damage, const FVector& Direction);
+
+	/** Back to full health (a duel starts). */
+	void RestoreHealth() { Health = MaxHealth; }
+
+	bool IsGuarding() const { return bGuarding; }
+	/** The guard went up so recently that a flame arriving now is parried. */
+	bool IsParryReady() const { return bGuarding && GuardTimeS <= ParryWindowS; }
+	bool IsDown() const { return DownS > 0.0; }
+	/** Seconds until a knocked-down bender gets up. */
+	double GetDownSeconds() const { return DownS; }
+	/** Which way a knocked-down bender fell (horizontal, unit). */
+	FVector GetFallDirection() const { return FallDirection; }
+	bool IsFlinching() const { return FlinchS > 0.0; }
+	double GetHealth() const { return Health; }
+	double GetMaxHealth() const { return MaxHealth; }
+
+	/** Guarding or down, no technique starts. */
+	bool CanStartTechnique() const { return !bGuarding && DownS <= 0.0; }
+
+	/** Walking speed multiplier: slow behind a guard, slower still when rocked by a hit. */
+	float GetMoveSpeedScale() const;
+
+	/** A guard raised this recently parries. */
+	static constexpr double ParryWindowS = 0.2;
+	/** A guard lets this share of a flame's damage through, and each block costs stamina. */
+	static constexpr double BlockDamageScale = 0.2;
+	static constexpr double BlockStamina = 10.0;
+	static constexpr double PlayerDownSeconds = 3.0;
+	static constexpr double GuardSpeedScale = 0.35;
+	/** A released guard can be raised again after this long (so it cannot be tapped into a constant parry). */
+	static constexpr double GuardRecastS = 0.3;
+	/** A flame striking the bender shoves them this hard (a blocked one a third of it). */
+	static constexpr double FlameKnockbackCmS = 330.0;
+	/** Out of a duel, health comes back this fast (per second). */
+	static constexpr double RestHealPerS = 25.0;
 
 protected:
 	virtual void BeginPlay() override;
@@ -229,6 +290,17 @@ private:
 	double GetWorldTime() const;
 	void AddOutOfChiMessage();
 
+	// ---------------------------------------------------------------- Health and guard
+	/** Guard up or down, the knockdown timer, and rest healing out of a duel. */
+	void UpdateGuard(float DeltaSeconds);
+	/** Damage reaching the bender: a shove, a flinch on a clean hit, a knockdown at zero (which ends a duel). */
+	void HurtBender(double Damage, const FVector& Direction, double KnockbackCmS, bool bBlocked);
+	/** Adds (or takes) chi and stamina through the ability system, as the resource cost effect does. */
+	void AddResources(double ChiDelta, double StaminaDelta);
+	/** Stamina left (unlimited without a stamina pool). */
+	double GetStamina() const;
+	ABendingSparringPartner* GetSparringPartner() const;
+
 	TWeakObjectPtr<USceneComponent> Hand;
 	TWeakObjectPtr<UBendingComponent> CachedBending;
 	mutable TWeakObjectPtr<ABendingSandboxArena> CachedArena;
@@ -259,4 +331,18 @@ private:
 	FVector RockRiseTo = FVector::ZeroVector;
 	double RockRiseStartSeconds = 0.0;
 	double RockRiseSeconds = 0.3;
+
+	mutable TWeakObjectPtr<ABendingSparringPartner> CachedPartner;
+	double Health = 100.0;
+	double MaxHealth = 100.0;
+	/** The guard input is down; the guard itself is up (since GuardTimeS), and when it may be raised again. */
+	bool bGuardHeld = false;
+	bool bGuarding = false;
+	double GuardTimeS = 0.0;
+	double GuardCooldownS = 0.0;
+	/** Rocked by a hit (slowed), knocked down (no control), just back up (cannot be hurt). */
+	double FlinchS = 0.0;
+	double DownS = 0.0;
+	double ProtectS = 0.0;
+	FVector FallDirection = FVector::ForwardVector;
 };

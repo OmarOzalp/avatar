@@ -6,6 +6,7 @@
 #include "BendingProjectile.generated.h"
 
 class ABendingSandboxArena;
+class ABendingSparringPartner;
 class UBendingInteractionSubsystem;
 class UElementalVolumeComponent;
 class UMaterialInstanceDynamic;
@@ -61,6 +62,10 @@ public:
 	/** A released ground flame burns the ground it lit: FuelJ of heat at PowerW, unless water puts it out first. */
 	void SetFuel(double InFuelJ, double PowerW);
 
+	/** Bent by the sparring partner: it strikes the player instead of the partner. A parry turns it back and it changes hands. */
+	void SetFromSparringPartner(bool bInFromSparringPartner) { bFromSparringPartner = bInFromSparringPartner; }
+	bool IsFromSparringPartner() const { return bFromSparringPartner; }
+
 	EBendingProjectileKind GetKind() const { return Kind; }
 	FVector GetVelocityCmS() const { return VelocityCmS; }
 	/** Sets the velocity of matter in flight (a tornado steering it); grounded matter stays put. */
@@ -114,6 +119,12 @@ private:
 	/** Ice dagger: strikes a physics body between the last position and this one. True when it hit (and shattered). */
 	bool StrikeAlongPath(const FVector& From, const FVector& To, const FElementalVolumeState& State);
 
+	/**
+	 * Flame in flight striking a fighter: the player's strikes the sparring partner, the partner's strikes the player
+	 * (who may block or parry it). Once is all a blast hurts. True when the actor was destroyed.
+	 */
+	bool StrikeFighters(const FVector& Location, const FElementalVolumeState& State);
+
 	/** Lands, splashes or dies on contact with the ground or a pond. True when the actor was destroyed. */
 	bool HandleGroundContact(FVector& Location, const FElementalVolumeState& State);
 	double GetGroundHeight(const FVector& LocationCm) const;
@@ -124,6 +135,7 @@ private:
 
 	TWeakObjectPtr<ABendingSandboxArena> Arena;
 	TWeakObjectPtr<UBendingInteractionSubsystem> Interaction;
+	TWeakObjectPtr<ABendingSparringPartner> SparringPartner;
 
 	EBendingProjectileKind Kind = EBendingProjectileKind::Fire;
 	FVector VelocityCmS = FVector::ZeroVector;
@@ -139,4 +151,7 @@ private:
 	bool bGrounded = false;
 	bool bWithFlameLight = false;
 	bool bInitialized = false;
+	bool bFromSparringPartner = false;
+	/** It struck a fighter (once is all a blast hurts). */
+	bool bStruck = false;
 };

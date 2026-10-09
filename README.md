@@ -28,10 +28,11 @@ against or parry straight back at them. Ten training goals walk a new player thr
 5. When the editor opens, press **Play** (Alt+P). Click into the viewport so it takes the mouse.
 
 There are no assets to create. The project starts on an empty engine map, and `AAvatarGameMode` builds the arena
-from code when the level starts: the terrain, ponds, props and lighting. The character, props and effects are made of
-engine basic shapes, and the HUD is drawn on the canvas. It plays the same techniques as the browser build, but it
-looks much plainer: the cartoon look, shaders and particle effects exist only in the browser build so far. The
-interactive field and dummy health work in both; the sparring partner, guard and parry are browser-only for now.
+from code when the level starts: the terrain, ponds, props, the sparring partner and lighting. The character, props
+and effects are made of engine basic shapes, and the HUD is drawn on the canvas. It plays the same techniques as the
+browser build, but it looks much plainer: the cartoon look, shaders and particle effects exist only in the browser
+build so far. The interactive field, dummy health, the sparring partner, guard and parry work in both; the dodge
+roll is browser-only so far.
 
 > The Unreal code has not been compiled yet: the environment it was written in has no engine. Expect a short round
 > of fixes on the first build. See [First build](docs/ARCHITECTURE.md#first-build) for the parts most likely to need them.
@@ -77,6 +78,7 @@ shapes; its materials and Niagara effects come next.
 | 1 2 3 4 | Water, Earth, Fire, Air stance |
 | Left mouse, right mouse, Q, E, F | The stance's techniques (below); F is its signature move |
 | C (hold) | Guard: blocks most of a blast for stamina; raised just as a blast arrives, it parries it back |
+| V | Dodge roll the way you are moving (a backstep with no direction); a blast passes through a roll (browser) |
 | H | Show or hide the controls panel |
 | M | Sound on or off (browser) |
 
@@ -91,7 +93,7 @@ The HUD shows health, chi and stamina, the current move's Startup / Active / Rec
 each technique did and what it cost, and every reaction between elements as it happens.
 
 **Things to try**
-- Hit the firebender waiting in the ring (any technique) to start a duel. Strike while they wind up or recover; hold C to guard, and tap it just as a blast arrives to send it back. Hide behind an earth wall: they have to work round it.
+- Hit the firebender waiting in the ring (any technique) to start a duel. Strike while they wind up or recover; hold C to guard, and tap it just as a blast arrives to send it back, or roll through it with V. Hide behind an earth wall: they have to work round it.
 - Water only comes from a pond: walk within 15 m (the HUD and a ring on the shore tell you), then left-click.
 - Lash a lit brazier: the stream and the spray flung off its tip boil to steam, and two lashes put the fire out. Hit the brazier with fire to relight it.
 - Light a ground flame (Fire, hold E), then lash it once with water: it goes out.
@@ -145,7 +147,7 @@ docs/ROADMAP.md              Where the demo stands, what comes next, and what yo
 The physics kernel builds and runs without the engine (clang++ and Node 18+):
 
 ```
-Tests/run_all.sh                 # 272 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
+Tests/run_all.sh                 # 308 checks in six suites, plus bit-exact WebAssembly parity for both browser builds
 Tools/SimDemo/build_sandbox.sh   # writes Tools/SimDemo/build/BendingLab.html (the 2D reaction lab)
 ```
 
