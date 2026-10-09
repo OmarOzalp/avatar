@@ -14,7 +14,8 @@ inline void* operator new(decltype(sizeof(0)), void* Where) noexcept { return Wh
 
 namespace
 {
-	constexpr int PlayerFields = 50;
+	constexpr int PlayerFields = 58;
+	constexpr int RivalFields = 28;
 	constexpr int BodyStride = 30;
 	constexpr int VolumeStride = 18;
 	constexpr int WhipStride = 6;
@@ -40,6 +41,7 @@ namespace
 
 	FInput GInput;
 	double GPlayer[PlayerFields];
+	double GRival[RivalFields];
 	double GBodies[FSandbox::MaxBodies * BodyStride];
 	double GVolumes[FSimWorld::MaxVolumes * VolumeStride];
 	double GWhip[FWaterWhip::MaxPoints * WhipStride];
@@ -55,7 +57,7 @@ namespace
 SB_EXPORT(sb_init) void SbInit() { Sandbox(); }
 SB_EXPORT(sb_reset) void SbReset() { Sandbox().Init(); }
 
-/** Buttons: bit 0 LMB, 1 RMB, 2 Q, 3 E, 4 jump, 5 sprint. Stance: 0 = keep, else ETechniqueElement (1 Earth, 2 Water, 3 Fire, 4 Air). */
+/** Buttons: bit 0 LMB, 1 RMB, 2 Q, 3 E, 4 jump, 5 sprint, 6 F, 7 guard. Stance: 0 = keep, else ETechniqueElement (1 Earth, 2 Water, 3 Fire, 4 Air). */
 SB_EXPORT(sb_set_input) void SbSetInput(double MoveForward, double MoveRight, double CamX, double CamY, double CamZ,
 	double DirX, double DirY, double DirZ, int Buttons, int Stance)
 {
@@ -70,6 +72,7 @@ SB_EXPORT(sb_set_input) void SbSetInput(double MoveForward, double MoveRight, do
 	}
 	GInput.bJump = (Buttons >> 4) & 1;
 	GInput.bSprint = (Buttons >> 5) & 1;
+	GInput.bGuard = (Buttons >> 7) & 1;
 	GInput.StanceRequest = Stance;
 }
 
@@ -135,8 +138,63 @@ SB_EXPORT(sb_player) double* SbPlayer()
 	O[46] = P.bScooter ? 1.0 : 0.0;
 	O[47] = P.DashTimeS;
 	O[48] = S.Tornado.LifetimeS;
-	O[49] = 0.0;
+	O[49] = P.Health;
+	O[50] = P.MaxHealth;
+	O[51] = P.bGuarding ? 1.0 : 0.0;
+	O[52] = P.GuardTimeS;
+	O[53] = P.FlinchS;
+	O[54] = P.DownS;
+	O[55] = P.FallDirection.X;
+	O[56] = P.FallDirection.Y;
+	O[57] = P.ProtectS;
 	return GPlayer;
+}
+
+/** The sparring partner: state, attack, feet, facing, stride, health, the duel's score. */
+SB_EXPORT(sb_rival) double* SbRival()
+{
+	const FSandbox& S = Sandbox();
+	const FRival& R = S.Rival;
+	double* O = GRival;
+	for (int Index = 0; Index < RivalFields; ++Index)
+	{
+		O[Index] = 0.0;
+	}
+	if (R.Body < 0 || !S.Bodies[R.Body].bAlive)
+	{
+		return GRival;
+	}
+	const FBody& B = S.Bodies[R.Body];
+	const double FeetZ = B.LocationCm.Z - B.HalfHeightCm - B.RadiusCm;
+	O[0] = 1.0;
+	O[1] = static_cast<double>(R.State);
+	O[2] = static_cast<double>(R.Attack);
+	O[3] = R.StateTimeS;
+	O[4] = R.StateDurationS;
+	O[5] = B.LocationCm.X;
+	O[6] = B.LocationCm.Y;
+	O[7] = FeetZ;
+	O[8] = R.YawRad;
+	O[9] = B.VelocityCmS.X;
+	O[10] = B.VelocityCmS.Y;
+	O[11] = B.VelocityCmS.Z;
+	O[12] = R.StridePhase;
+	O[13] = B.Health / FSandbox::DummyMaxHealth;
+	O[14] = B.KnockoutS;
+	O[15] = B.Tilt[0];
+	O[16] = B.Tilt[1];
+	O[17] = R.HandCm.X;
+	O[18] = R.HandCm.Y;
+	O[19] = R.HandCm.Z;
+	O[20] = R.ShotsFired;
+	O[21] = R.PlayerWins;
+	O[22] = R.RivalWins;
+	O[23] = static_cast<double>(R.Element);
+	O[24] = R.Body;
+	O[25] = S.IsDuelActive() ? 1.0 : 0.0;
+	O[26] = B.FallDirection.X;
+	O[27] = B.FallDirection.Y;
+	return GRival;
 }
 
 SB_EXPORT(sb_pack_bodies) int SbPackBodies()

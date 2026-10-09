@@ -36,6 +36,8 @@ namespace BendingSandbox3D
 		FVec3 CameraForward = FVec3(1.0, 0.0, 0.0);
 		bool bJump = false;
 		bool bSprint = false;
+		/** Guard held (C): blocks the sparring partner's attacks, parries them in its first moments. */
+		bool bGuard = false;
 		/** Held state of LMB, RMB, Q, E. */
 		bool bSlotHeld[static_cast<int>(ETechniqueSlot::Count)] = {};
 		/** 0 = no change, else an ETechniqueElement. */
@@ -47,7 +49,9 @@ namespace BendingSandbox3D
 		/** From the arena layout (EArenaProp). */
 		Prop,
 		/** Pulled out of the ground by Rock Throw. */
-		ThrownRock
+		ThrownRock,
+		/** The sparring partner's body (FRival): a training dummy's capsule, the size and weight of a person. */
+		Rival
 	};
 
 	/** A solid thing with a simulated volume: stones, boulders, clods, dummies, ice blocks, brazier flames, thrown rocks. */
@@ -96,6 +100,8 @@ namespace BendingSandbox3D
 		/** Which way it fell (unit, horizontal) and where it stands again when it gets back up. */
 		FVec3 FallDirection;
 		FVec3 HomeCm;
+		/** Thrown rocks: the sparring partner has seen it coming and decided what to do. */
+		bool bThreatChecked = false;
 	};
 
 	enum class EProjectileKind : unsigned char
@@ -122,6 +128,12 @@ namespace BendingSandbox3D
 		double SustainPowerW = 0.0;
 		/** A released ground flame's fuel (J): the ground it lit, burning on its own. */
 		double FuelJ = 0.0;
+		/** Who bent it: 0 the player, 1 the sparring partner (a parried blast changes hands). */
+		int Owner = 0;
+		/** It struck a fighter (once is all a blast hurts). */
+		bool bStruck = false;
+		/** The sparring partner has seen it coming and decided what to do. */
+		bool bThreatChecked = false;
 		bool bLanded = false;
 		bool bAlive = false;
 	};
@@ -166,7 +178,93 @@ namespace BendingSandbox3D
 		FVec3 DashVelocityCmS;
 		/** Riding an air scooter. */
 		bool bScooter = false;
+
+		/** Health: only the sparring partner's attacks hurt. */
+		double Health = 100.0;
+		double MaxHealth = 100.0;
+		/** Guard held, and for how long (a parry in its first moments); a released guard can be raised again after GuardCooldownS. */
+		bool bGuarding = false;
+		double GuardTimeS = 0.0;
+		double GuardCooldownS = 0.0;
+		/** Rocked by a hit (slowed), knocked down (no control), just back up (cannot be hurt). */
+		double FlinchS = 0.0;
+		double DownS = 0.0;
+		double ProtectS = 0.0;
+		FVec3 FallDirection = FVec3(1.0, 0.0, 0.0);
 	};
+
+	/** The sparring partner's behaviour, one state at a time. */
+	enum class ERivalState : unsigned char
+	{
+		/** At its post, waiting to be challenged: hit it to start a duel. */
+		Waiting,
+		/** Bowing before the first exchange. */
+		Ready,
+		/** Keeping its distance: closing in, backing off, circling. */
+		Moving,
+		/** Telegraphing an attack: fist drawn back, glowing. The opening to strike first or guard. */
+		WindUp,
+		Attacking,
+		/** Committed: cannot guard or dodge. The opening to punish. */
+		Recovering,
+		/** Takes a quarter of the damage. */
+		Guarding,
+		/** Sidestepping something thrown at it. */
+		Dodging,
+		/** Rocked by a big hit: cannot act. */
+		Staggered,
+		/** Knocked out: the duel is the player's. */
+		Down,
+		/** Duel over: bows, walks back to its post. */
+		Returning
+	};
+
+	enum class ERivalAttack : unsigned char
+	{
+		None,
+		/** One heavy fire blast. */
+		Blast,
+		/** Three quick blasts, left, right, left. */
+		Combo,
+		/** Up close: a ring of fire bursting outward that shoves the player away. */
+		Burst
+	};
+
+	/** A firebender who spars with the player: it circles, attacks with fire, guards, dodges, and can be knocked out. */
+	struct FRival
+	{
+		bool bEnabled = true;
+		/** Its body in Bodies (EBodyKind::Rival), or -1. */
+		int Body = -1;
+		ETechniqueElement Element = ETechniqueElement::Fire;
+		ERivalState State = ERivalState::Waiting;
+		ERivalAttack Attack = ERivalAttack::None;
+		double StateTimeS = 0.0;
+		/** How long the current state lasts (s; 0 = until something happens). */
+		double StateDurationS = 0.0;
+		double CooldownS = 0.0;
+		int ShotsLeft = 0;
+		int ShotsFired = 0;
+		double ShotTimerS = 0.0;
+		double StrafeSign = 1.0;
+		double StrafeTimerS = 0.0;
+		FVec3 DodgeDirection;
+		double YawRad = 0.0;
+		/** Where it waits for a challenge (feet). */
+		FVec3 PostCm;
+		/** The hand it attacks from. */
+		FVec3 HandCm;
+		double StridePhase = 0.0;
+		/** Damage taken since its last update (a big hit staggers it); damage that challenged it while waiting. */
+		double FrameHurt = 0.0;
+		double ChallengeDamage = 0.0;
+		/** Just staggered: another big hit will not stagger it again until this runs out. */
+		double PoiseS = 0.0;
+		int PlayerWins = 0;
+		int RivalWins = 0;
+		unsigned int Seed = 0x2545F491u;
+	};
+
 
 	/** A tornado spun up by an airbender. */
 	struct FTornado
@@ -203,7 +301,23 @@ namespace BendingSandbox3D
 		/** A dummy's health ran out: it falls over. */
 		Knockout,
 		/** A knocked-out dummy stands up again, whole. */
-		Respawn
+		Respawn,
+		/** The sparring partner's attack struck the player (EnergyJ: damage). */
+		PlayerHit,
+		/** The player's guard took an attack (EnergyJ: damage let through). */
+		Blocked,
+		/** A perfect guard sent an attack back. */
+		Parried,
+		/** The player was knocked down. */
+		PlayerDown,
+		/** A duel began. */
+		DuelStart,
+		/** A duel ended (MassKg: 1 the player won, 2 the sparring partner won, 0 called off). */
+		DuelEnd,
+		/** The sparring partner began an attack (MassKg: its ERivalAttack). */
+		RivalWindUp,
+		/** The sparring partner guarded or dodged (MassKg: 1 guard, 2 dodge). */
+		RivalEvade
 	};
 
 	/** Earthbending in progress (wall rising, rock lifting). */
@@ -254,6 +368,7 @@ namespace BendingSandbox3D
 		FArenaLayout Layout;
 		FWaterWhip Whip;
 		FPlayer Player;
+		FRival Rival;
 		FBody Bodies[MaxBodies];
 		int NumBodies = 0;
 		FProjectile Projectiles[MaxProjectiles];
@@ -348,11 +463,43 @@ namespace BendingSandbox3D
 		/** Damage from a hit, per m/s it changes a dummy's speed. */
 		static constexpr double DamagePerMs = 15.0;
 		static constexpr double KnockoutSeconds = 6.0;
-		/** Damages a training dummy (others ignore it); FromDirection is the way the blow travelled. */
-		void DamageBody(int Index, double Amount, const FVec3& FromDirection);
+		/**
+		 * Damages a training dummy or the sparring partner (others ignore it); FromDirection is the way the blow
+		 * travelled. bKnockOut knocks it out whatever its health (burnt through, thrown off the field).
+		 */
+		void DamageBody(int Index, double Amount, const FVec3& FromDirection, bool bKnockOut = false);
+		/** The sparring partner takes at most this much from one blow. */
+		static constexpr double RivalBlowCap = 40.0;
+		static constexpr double RivalDownSeconds = 4.0;
+		static constexpr double PlayerDownSeconds = 3.0;
+		/** A guard raised this recently parries: the attack flies back at whoever sent it. */
+		static constexpr double ParryWindowS = 0.2;
+		/** A guard lets this share of an attack's damage through, and each block costs stamina. */
+		static constexpr double BlockDamageScale = 0.2;
+		static constexpr double BlockStamina = 10.0;
+		/** Damage from a flame striking a fighter: FlameStrikeDamage * (mass / 0.6 kg)^1.5. */
+		static constexpr double FlameStrikeDamage = 12.0;
+		/** True while a duel is on (from the bow to a knockout). */
+		bool IsDuelActive() const;
 	private:
 		/** Reports the frame's damage as hits, and stands knocked-out dummies back up. */
 		void UpdateDummies(double Dt);
+		void SpawnRival();
+		/** The sparring partner's decisions and movement (before bodies move). */
+		void UpdateRival(double Dt);
+		/** Flames striking fighters: the sparring partner's at the player (guard, parry), the player's at the sparring partner. */
+		void UpdateFighterHits();
+		void UpdateGuard(const FInput& Input, double Dt);
+		void SetRivalState(ERivalState State, double DurationS);
+		void RivalShoot(double MassKg, double SpeedMs, double SpreadRad, double Side);
+		void RivalBurst();
+		void StartDuel();
+		void EndDuel(int Winner);
+		void HurtPlayer(double Damage, const FVec3& Direction, double KnockbackCmS);
+		/** 0..1, deterministic. */
+		double RivalRandom();
+		FVec3 GetRivalFeetCm() const;
+		FVec3 GetRivalChestCm() const;
 		/** Ground flame fed by the current hold. */
 		int HoldProjectile = -1;
 		/** Where Raise / Lower Ground works, fixed when the hold starts. */

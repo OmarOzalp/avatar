@@ -116,9 +116,10 @@ namespace
 		int Props = 0;
 		for (int Index = 0; Index < GSandbox.NumBodies; ++Index)
 		{
-			Props += GSandbox.Bodies[Index].bAlive ? 1 : 0;
+			Props += GSandbox.Bodies[Index].bAlive && GSandbox.Bodies[Index].Kind == EBodyKind::Prop ? 1 : 0;
 		}
 		ExpectTrue("every prop of the layout is in the world", Props == GSandbox.Layout.NumProps);
+		ExpectTrue("the sparring partner waits at its post", GSandbox.Rival.Body >= 0 && GSandbox.Rival.State == ERivalState::Waiting);
 		ExpectTrue("three braziers burn", GSandbox.Bodies[FindProp(EArenaProp::Brazier, 0)].bLit && GSandbox.Bodies[FindProp(EArenaProp::Brazier, 2)].bLit);
 		Run(LookAt(GSandbox.Player.LocationCm + FVec3(1000.0, 0.0, 0.0)), 2.0);
 		const FBody& Stone = GSandbox.Bodies[FindProp(EArenaProp::Stone)];
@@ -734,6 +735,188 @@ namespace
 		ExpectTrue("ice daggers do real damage (> 50)", Cut > 50.0);
 	}
 
+	FVec3 RivalChest()
+	{
+		return GSandbox.Bodies[GSandbox.Rival.Body].LocationCm + FVec3(0.0, 0.0, 20.0);
+	}
+
+	int CountRivalFlames()
+	{
+		int Count = 0;
+		for (const FProjectile& Projectile : GSandbox.Projectiles)
+		{
+			Count += Projectile.bAlive && Projectile.Owner == 1 ? 1 : 0;
+		}
+		return Count;
+	}
+
+	/** Challenges the sparring partner with a fire blast from where the player starts and waits for the bow. */
+	bool ChallengeRival()
+	{
+		SetStance(ETechniqueElement::Fire);
+		Run(LookAt(RivalChest()), 0.5);
+		Press(ETechniqueSlot::Primary, RivalChest(), 0.1);
+		for (int Frame = 0; Frame < 180 && GSandbox.Rival.State == ERivalState::Waiting; ++Frame)
+		{
+			GSandbox.Advance(LookAt(RivalChest()), Dt);
+		}
+		return GSandbox.Rival.State != ERivalState::Waiting;
+	}
+
+	/** True when one of the sparring partner's flames will reach the player within Seconds. */
+	bool FlameIncoming(double Seconds)
+	{
+		const FVec3 Chest = GSandbox.Player.LocationCm + FVec3(0.0, 0.0, 110.0);
+		for (const FProjectile& Projectile : GSandbox.Projectiles)
+		{
+			if (!Projectile.bAlive || Projectile.Owner != 1 || Projectile.bStruck || Projectile.bLanded)
+			{
+				continue;
+			}
+			const FVec3 Ahead = Projectile.LocationCm + Projectile.VelocityCmS * Seconds;
+			if (Distance(ClosestPointOnSegment(Chest, Projectile.LocationCm, Ahead), Chest) < 90.0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	void SparringPartnerDuels()
+	{
+		SimTest::Section("Sparring partner: waits, is challenged, fights");
+		GSandbox.Init();
+		const FVec3 Post = GSandbox.Bodies[GSandbox.Rival.Body].LocationCm;
+		Run(LookAt(GSandbox.Player.LocationCm + FVec3(0.0, -1000.0, 0.0)), 3.0);
+		ExpectTrue("left alone, it waits at its post", GSandbox.Rival.State == ERivalState::Waiting && CountRivalFlames() == 0
+			&& Distance(GSandbox.Bodies[GSandbox.Rival.Body].LocationCm, Post) < 50.0);
+		ExpectTrue("a fire blast challenges it", ChallengeRival());
+		ExpectTrue("and the duel is announced", HasMessage("Duel!"));
+		ExpectTrue("the challenge does not hurt it", GSandbox.Bodies[GSandbox.Rival.Body].Health == FSandbox::DummyMaxHealth);
+		bool bAttacked = false;
+		for (int Frame = 0; Frame < 60 * 8 && !bAttacked; ++Frame)
+		{
+			GSandbox.Advance(LookAt(RivalChest()), Dt);
+			bAttacked = CountRivalFlames() > 0;
+		}
+		ExpectTrue("it attacks with fire", bAttacked);
+		Run(LookAt(RivalChest()), 15.0);
+		std::printf("    standing still for 15 s: %.0f health left\n", GSandbox.Player.Health);
+		ExpectTrue("its fire hurts", GSandbox.Player.Health < GSandbox.Player.MaxHealth);
+		ExpectTrue("it circles instead of standing still", Distance(GSandbox.Bodies[GSandbox.Rival.Body].LocationCm, Post) > 100.0);
+	}
+
+	void GuardBlocksParryReturns()
+	{
+		SimTest::Section("Guard blocks, a timed guard parries");
+		GSandbox.Init();
+		ChallengeRival();
+		// Guard held the whole time: blocks soak most of each flame and cost stamina.
+		int Blocks = 0;
+		double Lost = 0.0;
+		for (int Frame = 0; Frame < 60 * 12; ++Frame)
+		{
+			FInput Input = LookAt(RivalChest());
+			Input.bGuard = true;
+			const double Before = GSandbox.Player.Health;
+			GSandbox.Advance(Input, Dt);
+			for (int Event = 0; Event < GSandbox.NumFrameEvents; ++Event)
+			{
+				Blocks += GSandbox.FrameEvents[Event].Effect == ESandboxEffect::Blocked ? 1 : 0;
+			}
+			Lost += KMax(Before - GSandbox.Player.Health, 0.0);
+		}
+		std::printf("    guarding 12 s: %d blocks, %.1f health lost\n", Blocks, Lost);
+		ExpectTrue("the guard blocks its flames", Blocks > 0);
+		ExpectTrue("a block lets little through", Lost <= Blocks * FSandbox::FlameStrikeDamage * FSandbox::BlockDamageScale + 1e-6);
+		ExpectTrue("blocking costs stamina", GSandbox.Player.Stamina < GSandbox.Player.MaxStamina || Blocks == 0);
+
+		// Guard raised just as a flame arrives: it flies back and hurts the sender.
+		Run(LookAt(RivalChest()), 0.5);
+		bool bParried = false;
+		bool bGuard = false;
+		const double RivalBefore = GSandbox.Bodies[GSandbox.Rival.Body].Health;
+		for (int Frame = 0; Frame < 60 * 20 && !bParried; ++Frame)
+		{
+			if (!bGuard && FlameIncoming(0.08))
+			{
+				bGuard = true;
+			}
+			FInput Input = LookAt(RivalChest());
+			Input.bGuard = bGuard;
+			GSandbox.Advance(Input, Dt);
+			for (int Event = 0; Event < GSandbox.NumFrameEvents; ++Event)
+			{
+				bParried = bParried || GSandbox.FrameEvents[Event].Effect == ESandboxEffect::Parried;
+			}
+			if (bGuard && !GSandbox.Player.bGuarding && GSandbox.Player.GuardCooldownS <= 0.0)
+			{
+				bGuard = false;
+			}
+			if (bGuard && GSandbox.Player.GuardTimeS > 0.3)
+			{
+				bGuard = false;
+			}
+		}
+		ExpectTrue("a guard raised as the flame arrives parries it", bParried);
+		ExpectTrue("and says so", HasMessage("Perfect guard"));
+		bool bReturned = false;
+		for (const FProjectile& Projectile : GSandbox.Projectiles)
+		{
+			bReturned = bReturned || (Projectile.bAlive && Projectile.Owner == 0 && Projectile.Kind == EProjectileKind::Fire);
+		}
+		ExpectTrue("the parried flame now flies for the player", bReturned);
+		Run(LookAt(RivalChest()), 1.0);
+		std::printf("    sparring partner after the parry: %.0f health (was %.0f)\n", GSandbox.Bodies[GSandbox.Rival.Body].Health, RivalBefore);
+		ExpectTrue("it strikes the sparring partner (or its guard)", GSandbox.Bodies[GSandbox.Rival.Body].Health < RivalBefore
+			|| GSandbox.Rival.State == ERivalState::Guarding || GSandbox.Rival.State == ERivalState::Dodging);
+	}
+
+	void DuelsAreWonAndLost()
+	{
+		SimTest::Section("Duels are won and lost; both get back up");
+		GSandbox.Init();
+		ChallengeRival();
+		SetStance(ETechniqueElement::Air);
+		int Blasts = 0;
+		for (int Frame = 0; Frame < 60 * 40 && GSandbox.Rival.State != ERivalState::Down; ++Frame)
+		{
+			FInput Input = LookAt(RivalChest());
+			// An air blast whenever ready.
+			Input.bSlotHeld[0] = Frame % 30 == 0;
+			Blasts += Input.bSlotHeld[0] ? 1 : 0;
+			GSandbox.Advance(Input, Dt);
+		}
+		std::printf("    knocked out with %d air blasts\n", Blasts);
+		ExpectTrue("air blasts knock the sparring partner out", GSandbox.Rival.State == ERivalState::Down && GSandbox.Rival.PlayerWins == 1);
+		ExpectTrue("you win the duel", HasMessage("You win the duel"));
+		Run(LookAt(RivalChest()), FSandbox::RivalDownSeconds + 6.0);
+		ExpectTrue("it gets up and walks back to its post", GSandbox.Rival.State == ERivalState::Waiting);
+		ExpectTrue("whole again", GSandbox.Bodies[GSandbox.Rival.Body].Health == FSandbox::DummyMaxHealth);
+
+		// Standing still without guarding loses.
+		GSandbox.Init();
+		ChallengeRival();
+		for (int Frame = 0; Frame < 60 * 120 && GSandbox.Player.DownS <= 0.0; ++Frame)
+		{
+			GSandbox.Advance(LookAt(RivalChest()), Dt);
+		}
+		std::printf("    knocked down after %.0f s of standing still\n", GSandbox.TimeS);
+		ExpectTrue("standing still, the player is knocked down", GSandbox.Player.DownS > 0.0 && GSandbox.Rival.RivalWins == 1);
+		ExpectTrue("and the duel is over", !GSandbox.IsDuelActive());
+		// Thrown back by the blow, then flat on the ground: pushing forward does nothing.
+		Run(LookAt(RivalChest()), 0.8);
+		FInput Push = LookAt(RivalChest());
+		Push.MoveForward = 1.0;
+		const FVec3 Lying = GSandbox.Player.LocationCm;
+		Run(Push, 1.0);
+		ExpectTrue("down, the player cannot move", Distance(Flat(GSandbox.Player.LocationCm), Flat(Lying)) < 60.0);
+		Run(LookAt(RivalChest()), FSandbox::PlayerDownSeconds - 1.7);
+		ExpectTrue("up again with full health", GSandbox.Player.DownS <= 0.0 && GSandbox.Player.Health == GSandbox.Player.MaxHealth);
+		Run(LookAt(RivalChest()), 8.0);
+		ExpectTrue("the sparring partner goes back to its post", GSandbox.Rival.State == ERivalState::Waiting);
+	}
+
 	void FreezeCostsLatentHeat()
 	{
 		SimTest::Section("Freeze the whip");
@@ -911,6 +1094,9 @@ int main(int ArgCount, char** Args)
 	LanternsAndBarrels();
 	DummiesBurnAndChar();
 	DummiesTakeHitsAndGetUp();
+	SparringPartnerDuels();
+	GuardBlocksParryReturns();
+	DuelsAreWonAndLost();
 	FreezeCostsLatentHeat();
 	WaterBlastMakesMud();
 	AirThrowsDummiesNotBoulders();

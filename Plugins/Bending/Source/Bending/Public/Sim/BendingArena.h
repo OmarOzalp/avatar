@@ -99,6 +99,8 @@ namespace BendingSim
 		FVec3 OriginCm = FVec3(-4800.0, -4800.0, 0.0);
 		FVec3 PlayerStartCm;
 		double PlayerStartYawDeg = 0.0;
+		/** Where the sparring partner waits to be challenged (in the ring, facing the player's start). */
+		FVec3 SparringPostCm;
 
 		FArenaPond Ponds[MaxPonds];
 		int NumPonds = 0;

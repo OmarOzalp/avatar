@@ -172,6 +172,7 @@ namespace BendingSim
 			FArenaLayout Layout;
 			Layout.PlayerStartCm = FVec3(0.0, -300.0, 0.0);
 			Layout.PlayerStartYawDeg = 0.0;
+			Layout.SparringPostCm = FVec3(600.0, 250.0, 0.0);
 
 			AddPond(Layout, 700.0, 1100.0, 380.0, 80.0);
 			AddPond(Layout, -2400.0, 1900.0, 650.0, 120.0);
