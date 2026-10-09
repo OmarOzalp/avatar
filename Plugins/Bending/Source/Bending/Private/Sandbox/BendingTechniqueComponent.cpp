@@ -35,6 +35,8 @@ namespace
 	/** A stream stops when the bender cannot pay for half a puff; a single blast still goes out weaker. */
 	constexpr double StreamMinChiFraction = 0.5;
 	constexpr double BlastMinChiFraction = 0.1;
+	/** A waterbender can draw a whip from a water barrel this close to the hand. */
+	constexpr double BarrelDrawRangeCm = 500.0;
 	/** Air Jump: the column of air under the feet, pushed down as the bender rises. */
 	constexpr double AirJumpPuffRadiusCm = 50.0;
 	constexpr double AirJumpPuffCompression = 2.0;
@@ -271,21 +273,49 @@ void UBendingTechniqueComponent::BeginWaterWhip()
 
 	const FVector HandLocation = GetHandLocation();
 	BendingSim::FVec3 Source;
-	const int32 Pond = BendingSim::FindWaterSource(Arena->GetLayout(), BendingUnits::ToSim(HandLocation), Tuning.WhipDrawRangeCm, Source);
-	if (Pond < 0 || Arena->GetLayout().Ponds[Pond].WaterKg < Tuning.WhipWaterKg)
+	int32 Pond = BendingSim::FindWaterSource(Arena->GetLayout(), BendingUnits::ToSim(HandLocation), Tuning.WhipDrawRangeCm, Source);
+	if (Pond >= 0 && Arena->GetLayout().Ponds[Pond].WaterKg < Tuning.WhipWaterKg)
 	{
-		AddMessage(NoWater, WarningColor);
+		Pond = INDEX_NONE;
+	}
+	// No pond in reach: a water barrel close by will do.
+	ABendingPropActor* Barrel = nullptr;
+	if (Pond < 0)
+	{
+		double BestDistance = BarrelDrawRangeCm;
+		for (TActorIterator<ABendingPropActor> It(GetWorld()); It; ++It)
+		{
+			ABendingPropActor* Prop = *It;
+			if (Prop && Prop->GetKind() == BendingSim::EArenaProp::WaterBarrel && Prop->IsArenaProp() && Prop->GetWaterKg() >= Tuning.WhipWaterKg)
+			{
+				const FVector Top = Prop->GetActorLocation() + FVector(0.0, 0.0, 40.0);
+				const double Distance = FVector::Dist(Top, HandLocation);
+				if (Distance < BestDistance)
+				{
+					BestDistance = Distance;
+					Barrel = Prop;
+					Source = BendingUnits::ToSim(Top);
+				}
+			}
+		}
+	}
+	if (Pond < 0 && !Barrel)
+	{
+		AddMessage(NoWater + TEXT(" or a water barrel"), WarningColor);
 		return;
 	}
 
-	const double WaterKg = Arena->DrawPondWater(Pond, Tuning.WhipWaterKg);
+	const double WaterKg = Barrel ? Barrel->TakeWater(Tuning.WhipWaterKg) : Arena->DrawPondWater(Pond, Tuning.WhipWaterKg);
 	FActorSpawnParameters Params;
 	Params.Owner = GetOwner();
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	ABendingWaterWhipActor* NewWhip = GetWorld()->SpawnActor<ABendingWaterWhipActor>(ABendingWaterWhipActor::StaticClass(), FTransform(HandLocation), Params);
 	if (!NewWhip || !NewWhip->InitWhip(this, BendingUnits::ToEngine(Source), WaterKg, UBendingSettings::Get().AmbientTemperatureK))
 	{
-		Arena->ReturnPondWater(Pond, WaterKg);
+		if (Pond >= 0)
+		{
+			Arena->ReturnPondWater(Pond, WaterKg);
+		}
 		if (NewWhip)
 		{
 			NewWhip->Destroy();
@@ -298,7 +328,7 @@ void UBendingTechniqueComponent::BeginWaterWhip()
 	// Work: lifting the water from the pond surface to the hand.
 	const double LiftM = FMath::Max(BendingUnits::CmToM(HandLocation.Z - Source.Z), 0.0);
 	SpendEnergy(WaterKg * GetGravityMs2() * LiftM, EBendingEnergyKind::Kinetic);
-	AddMessage(FString::Printf(TEXT("Drew %.0f kg of water from the pond"), WaterKg), InfoColor);
+	AddMessage(FString::Printf(TEXT("Drew %.0f kg of water from the %s"), WaterKg, Barrel ? TEXT("barrel") : TEXT("pond")), InfoColor);
 }
 
 void UBendingTechniqueComponent::LashWaterWhip(double WindupS, double StrikeS)

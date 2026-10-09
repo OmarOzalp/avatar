@@ -96,6 +96,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Projectile", meta = (ClampMin = 0.1, Units = "s"))
 	float IceShardLifetimeS = 3.f;
 
+	/** Damage an ice dagger does to a training dummy on top of its momentum. */
+	UPROPERTY(EditAnywhere, Category = "Projectile", meta = (ClampMin = 0.0))
+	float IceShardDamage = 15.f;
+
 	/** Share of gravity an ice dagger feels (the bender carries it). */
 	UPROPERTY(EditAnywhere, Category = "Projectile", meta = (ClampMin = 0.0, ClampMax = 1.0))
 	float IceShardGravityScale = 0.3f;

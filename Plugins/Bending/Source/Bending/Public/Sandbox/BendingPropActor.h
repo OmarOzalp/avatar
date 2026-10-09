@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "Physics/ElementalSubstance.h"
 #include "Sim/BendingArena.h"
+#include "Sim/BendingCombustion.h"
 #include "BendingPropActor.generated.h"
 
 class ABendingSandboxArena;
@@ -20,6 +21,12 @@ class UStaticMeshComponent;
  *  - Ice blocks are frozen to the ground; when fire melts one, its water soaks into the soil and it is gone.
  *  - Braziers keep a flame burning on a stone pedestal. Water puts it out; a flame brought close relights it.
  *  - Thrown rocks are soil pulled out of the terrain: kinematic while the bender lifts them, then launched.
+ *  - Banners, straw bales, crates, dummies and lanterns burn (BendingSim::FCombustible): they soak up heat from
+ *    flames near them, catch, keep a flame of their own burning in the simulation, char, and burn away; water
+ *    puts them out. Lanterns burn for as long as they are left lit.
+ *  - Crates and water barrels smash when hit hard (a thrown rock, an earthquake, a hard landing); a barrel's water
+ *    spills and soaks the ground, and a waterbender can draw a whip from it.
+ *  - Training dummies have health: blows, ice and fire hurt them, and at zero they topple and get up again later.
  */
 UCLASS()
 class BENDING_API ABendingPropActor : public AActor
@@ -29,8 +36,8 @@ class BENDING_API ABendingPropActor : public AActor
 public:
 	ABendingPropActor();
 
-	/** Builds an arena prop standing on the ground at GroundCm. */
-	void InitArenaProp(BendingSim::EArenaProp InKind, const FVector& InGroundCm);
+	/** Builds an arena prop standing on the ground at GroundCm, facing YawDeg; Variant is a banner's element. */
+	void InitArenaProp(BendingSim::EArenaProp InKind, const FVector& InGroundCm, double YawDeg = 0.0, int32 Variant = 0);
 
 	/** A rock of compacted soil (BendingSim::MakeRock), held kinematic by the bender until Launch. */
 	void InitThrownRock(double MassKg, double DensityKgM3, const FVector& LocationCm);
@@ -52,6 +59,31 @@ public:
 	bool IsThrownRock() const { return bThrownRock; }
 	double GetMassKg() const;
 	double GetRadiusCm() const { return RadiusCm; }
+	BendingSim::EArenaProp GetKind() const { return Kind; }
+	bool IsArenaProp() const { return bArenaProp; }
+
+	/** Training dummies: damage (others ignore it); FromDirection is the way the blow travelled. */
+	void TakeHit(double Damage, const FVector& FromDirection);
+	bool IsDummy() const { return bArenaProp && Kind == BendingSim::EArenaProp::Dummy; }
+	double GetHealthFraction() const { return Health / DummyMaxHealth; }
+	bool IsKnockedOut() const { return KnockoutS > 0.0; }
+	bool IsBurning() const { return Burn.bBurning; }
+
+	/** Water barrels: water left, and taking some (a waterbender's whip); returns what was taken. */
+	double GetWaterKg() const { return WaterKg; }
+	double TakeWater(double MassKg);
+
+	/** Smashes a crate or barrel next frame: boards fly, a barrel's water spills, a burning crate drops its fire. */
+	void RequestSmash() { bSmashPending = true; }
+
+	/** Every dummy hit (damage, or 0 with bKnockout for the knockout) for the HUD's numbers. */
+	DECLARE_MULTICAST_DELEGATE_FourParams(FOnPropHit, const ABendingPropActor* /*Prop*/, const FVector& /*Location*/, double /*Damage*/, bool /*bKnockout*/);
+	static FOnPropHit OnPropHit;
+
+	static constexpr double DummyMaxHealth = 100.0;
+	/** Damage per m/s a blow changes a dummy's speed. */
+	static constexpr double DamagePerMs = 15.0;
+	static constexpr double KnockoutSeconds = 6.0;
 
 protected:
 	virtual void Tick(float DeltaSeconds) override;
@@ -73,6 +105,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Prop")
 	TObjectPtr<UElementalVolumeComponent> Volume;
 
+	/** The fire of a burning prop (its flame volume lives in the interaction simulation). */
+	UPROPERTY(VisibleAnywhere, Category = "Prop")
+	TObjectPtr<UStaticMeshComponent> FlameMesh;
+
 	/** Brazier fuel: what a 0.5 kg, 1300 K flame loses to the air, so it burns steadily until water cools it. */
 	UPROPERTY(EditAnywhere, Category = "Prop", meta = (ClampMin = 0.0))
 	float BrazierPowerW = 6.0e5f;
@@ -90,6 +126,23 @@ private:
 
 	UFUNCTION()
 	void HandleDepleted(UElementalVolumeComponent* DepletedVolume);
+
+	UFUNCTION()
+	void HandleImpulse(FVector ImpulseKgCmS);
+
+	UFUNCTION()
+	void HandleBodyHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
+
+	/** A blow changed its speed by DeltaVCmS: dummies are hurt, crates and barrels may smash. */
+	void ReactToBlow(const FVector& DeltaVCmS);
+	void TickCombustion(float DeltaSeconds);
+	void TickDummy(float DeltaSeconds);
+	void GetCombustionPoints(FVector& OutCenterCm, FVector& OutFlameCm) const;
+	void ShowBurning(double BurntFraction, bool bBurning, bool bBurntOut);
+	void Smash();
+	void Respawn();
+	/** A line in the bender's message feed. */
+	void Announce(const FString& Text) const;
 
 	void SetupBody(const TCHAR* ShapeName, const FVector& CenterCm, const FVector& SizeCm, const FLinearColor& Color);
 	void SetupDetail(UStaticMeshComponent* Part, const TCHAR* ShapeName, const FVector& CenterCm, const FVector& SizeCm, const FLinearColor& Color);
@@ -111,6 +164,19 @@ private:
 	double RelightCheckSeconds = 0.0;
 	float ShownSaturation = 0.f;
 	float ShownMeltFraction = 0.f;
+	BendingSim::FCombustible Burn;
+	double LastShownBurnt = -1.0;
+	double WaterKg = 0.0;
+	double Health = DummyMaxHealth;
+	double KnockoutS = 0.0;
+	double ProtectS = 0.0;
+	double PendingDamage = 0.0;
+	double PendingAgeS = 0.0;
+	double QuietS = 0.0;
+	FVector HomeLocation = FVector::ZeroVector;
+	FRotator HomeRotation = FRotator::ZeroRotator;
+	double FacingYawDeg = 0.0;
+	bool bSmashPending = false;
 	bool bArenaProp = false;
 	bool bThrownRock = false;
 	bool bHeld = false;

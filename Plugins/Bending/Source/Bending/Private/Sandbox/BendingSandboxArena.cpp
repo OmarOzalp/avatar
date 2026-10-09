@@ -170,7 +170,7 @@ void ABendingSandboxArena::SpawnProps()
 		ABendingPropActor* Prop = GetWorld()->SpawnActor<ABendingPropActor>(ABendingPropActor::StaticClass(), FTransform(Ground), Params);
 		if (Prop)
 		{
-			Prop->InitArenaProp(Placement.Kind, Ground);
+			Prop->InitArenaProp(Placement.Kind, Ground, Placement.YawDeg, Placement.Variant);
 			Props.Add(Prop);
 		}
 	}

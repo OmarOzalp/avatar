@@ -13,7 +13,9 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
+#include "EngineUtils.h"
 #include "Interaction/BendingInteractionSubsystem.h"
+#include "Sandbox/BendingPropActor.h"
 #include "Sandbox/BendingSandboxLibrary.h"
 #include "Sandbox/BendingTechniqueComponent.h"
 #include "Sandbox/BendingTechniqueMove.h"
@@ -124,6 +126,7 @@ void AAvatarHUD::BeginPlay()
 		Interaction = Subsystem;
 		ReactionHandle = Subsystem->OnReactionNative.AddUObject(this, &AAvatarHUD::HandleReaction);
 	}
+	PropHitHandle = ABendingPropActor::OnPropHit.AddUObject(this, &AAvatarHUD::HandlePropHit);
 }
 
 void AAvatarHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -133,6 +136,8 @@ void AAvatarHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Subsystem->OnReactionNative.Remove(ReactionHandle);
 	}
 	ReactionHandle.Reset();
+	ABendingPropActor::OnPropHit.Remove(PropHitHandle);
+	PropHitHandle.Reset();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -198,7 +203,105 @@ void AAvatarHUD::DrawHUD()
 	}
 	DrawStatus(Pawn);
 	DrawFeed(Pawn);
+	DrawHits();
 	DrawControls();
+}
+
+void AAvatarHUD::HandlePropHit(const ABendingPropActor* Prop, const FVector& Location, double Damage, bool bKnockout)
+{
+	FHitNumber& Number = HitNumbers.AddDefaulted_GetRef();
+	Number.Location = Location + FVector(FMath::FRandRange(-20.f, 20.f), FMath::FRandRange(-20.f, 20.f), 0.0);
+	Number.TimeSeconds = GetTimeSeconds();
+	if (bKnockout)
+	{
+		Number.Text = TEXT("K.O.!");
+		Number.Color = FLinearColor(1.f, 0.85f, 0.2f);
+		Number.Scale = 2.2f;
+	}
+	else
+	{
+		Number.Text = FString::Printf(TEXT("%.0f"), Damage);
+		Number.Color = Damage >= 45.0 ? FLinearColor(1.f, 0.3f, 0.12f) : (Damage >= 18.0 ? FLinearColor(1.f, 0.6f, 0.2f) : FLinearColor(1.f, 0.95f, 0.75f));
+		Number.Scale = Damage >= 45.0 ? 2.0f : (Damage >= 18.0 ? 1.6f : 1.25f);
+		// Real blows chain a combo; a dummy's burning ticks only add damage.
+		const double Now = GetTimeSeconds();
+		if (Now - LastHitSeconds > 2.5)
+		{
+			ComboCount = 0;
+			ComboDamage = 0.0;
+		}
+		if (Damage >= 5.0)
+		{
+			++ComboCount;
+			LastHitSeconds = Now;
+		}
+		ComboDamage += Damage;
+	}
+	if (HitNumbers.Num() > 24)
+	{
+		HitNumbers.RemoveAt(0);
+	}
+}
+
+void AAvatarHUD::DrawHits()
+{
+	const double Now = GetTimeSeconds();
+	const UFont* Font = GEngine->GetLargeFont();
+
+	// Health bars over hurt dummies.
+	for (TActorIterator<ABendingPropActor> It(GetWorld()); It; ++It)
+	{
+		const ABendingPropActor* Prop = *It;
+		if (!Prop || !Prop->IsDummy() || Prop->IsKnockedOut() || Prop->GetHealthFraction() >= 0.999)
+		{
+			continue;
+		}
+		const FVector Screen = Project(Prop->GetActorLocation() + FVector(0.0, 0.0, 130.0));
+		if (Screen.Z <= 0.0)
+		{
+			continue;
+		}
+		const float Width = 70.f * UIScale;
+		const float Height = 8.f * UIScale;
+		const float X = static_cast<float>(Screen.X) - 0.5f * Width;
+		const float Y = static_cast<float>(Screen.Y);
+		DrawRect(FLinearColor(0.05f, 0.04f, 0.03f, 0.8f), X - 2.f, Y - 2.f, Width + 4.f, Height + 4.f);
+		const float Fraction = static_cast<float>(Prop->GetHealthFraction());
+		DrawRect(UBendingSandboxLibrary::LerpColor(FLinearColor(1.f, 0.25f, 0.15f), FLinearColor(0.45f, 0.9f, 0.3f), Fraction), X, Y, Width * Fraction, Height);
+	}
+
+	// Damage numbers rise and fade over a second and a half.
+	for (int32 Index = HitNumbers.Num() - 1; Index >= 0; --Index)
+	{
+		const FHitNumber& Number = HitNumbers[Index];
+		const double Age = Now - Number.TimeSeconds;
+		if (Age > 1.5)
+		{
+			HitNumbers.RemoveAt(Index);
+			continue;
+		}
+		const FVector Screen = Project(Number.Location + FVector(0.0, 0.0, 60.0 * Age));
+		if (Screen.Z <= 0.0)
+		{
+			continue;
+		}
+		FLinearColor Color = Number.Color;
+		Color.A = FMath::Clamp(static_cast<float>(1.5 - Age), 0.f, 1.f);
+		const float Pop = static_cast<float>(1.0 + 0.4 * FMath::Max(0.0, 1.0 - Age * 6.0));
+		const float Scale = Number.Scale * Pop;
+		DrawLabel(Number.Text, static_cast<float>(Screen.X) - 0.5f * GetTextWidth(Number.Text, Font, Scale), static_cast<float>(Screen.Y), Color, Font, Scale);
+	}
+
+	// Combo counter.
+	if (ComboCount >= 2 && Now - LastHitSeconds < 2.5)
+	{
+		const FString Count = FString::Printf(TEXT("x%d"), ComboCount);
+		const FString Label = FString::Printf(TEXT("COMBO  %.0f dmg"), ComboDamage);
+		const float X = static_cast<float>(Canvas->ClipX) * 0.86f;
+		const float Y = static_cast<float>(Canvas->ClipY) * 0.38f;
+		DrawLabel(Count, X - GetTextWidth(Count, Font, 2.6f), Y, FLinearColor(1.f, 0.85f, 0.25f), Font, 2.6f);
+		DrawLabel(Label, X - GetTextWidth(Label, Font, 1.1f), Y + 60.f * UIScale, FLinearColor::White, Font, 1.1f);
+	}
 }
 
 void AAvatarHUD::DrawLabel(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, float Scale)

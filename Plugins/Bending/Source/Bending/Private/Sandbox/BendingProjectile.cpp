@@ -14,6 +14,7 @@
 #include "Interaction/ElementalVolumeComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Physics/BendingUnits.h"
+#include "Sandbox/BendingPropActor.h"
 #include "Sandbox/BendingSandboxArena.h"
 #include "Sandbox/BendingSandboxLibrary.h"
 #include "Sim/BendingTechniques.h"
@@ -300,10 +301,14 @@ bool ABendingProjectile::StrikeAlongPath(const FVector& From, const FVector& To,
 	{
 		return false;
 	}
-	// It strikes and shatters: its momentum goes into what it hit.
+	// It strikes and shatters: its momentum goes into what it hit, and a blade of ice cuts a dummy.
 	if (UPrimitiveComponent* Struck = Hit.GetComponent(); Struck && Struck->IsSimulatingPhysics())
 	{
 		Struck->AddImpulseAtLocation(VelocityCmS * State.MassKg, Hit.ImpactPoint);
+	}
+	if (ABendingPropActor* Prop = Cast<ABendingPropActor>(Hit.GetActor()))
+	{
+		Prop->TakeHit(IceShardDamage, VelocityCmS);
 	}
 	Destroy();
 	return true;

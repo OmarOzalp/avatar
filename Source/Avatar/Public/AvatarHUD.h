@@ -6,6 +6,7 @@
 #include "Interaction/ElementalVolumeTypes.h"
 #include "AvatarHUD.generated.h"
 
+class ABendingPropActor;
 class UBendingComponent;
 class UBendingInteractionSubsystem;
 class UBendingMoveDefinition;
@@ -44,6 +45,18 @@ private:
 	};
 
 	void HandleReaction(const FElementalReactionEvent& Event);
+	void HandlePropHit(const ABendingPropActor* Prop, const FVector& Location, double Damage, bool bKnockout);
+
+	/** A damage number (or K.O.) floating up from a dummy. */
+	struct FHitNumber
+	{
+		FVector Location = FVector::ZeroVector;
+		FString Text;
+		FLinearColor Color = FLinearColor::White;
+		float Scale = 1.f;
+		double TimeSeconds = 0.0;
+	};
+	void DrawHits();
 
 	void DrawCrosshair();
 	void DrawResources(const APawn* Pawn);
@@ -59,6 +72,12 @@ private:
 
 	TWeakObjectPtr<UBendingInteractionSubsystem> Interaction;
 	FDelegateHandle ReactionHandle;
+	FDelegateHandle PropHitHandle;
+	TArray<FHitNumber> HitNumbers;
+	/** Hits in a row (within ComboSeconds of each other) and their total damage. */
+	int32 ComboCount = 0;
+	double ComboDamage = 0.0;
+	double LastHitSeconds = -100.0;
 	TArray<FReactionLine> Reactions;
 
 	/** The last move stays on the frame bar briefly after it ends. */
