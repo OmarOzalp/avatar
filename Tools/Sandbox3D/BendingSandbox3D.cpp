@@ -25,6 +25,12 @@ namespace BendingSandbox3D
 		/** A brazier's fuel: what a 0.5 kg flame at 1300 K loses to the air (80 W/m^2K over its ~7 m^2). */
 		constexpr double BrazierPowerW = 6.0e5;
 		constexpr double RelightRadiusCm = 150.0;
+		/** A waterbender can draw a whip from a barrel this close to the hand. */
+		constexpr double BarrelDrawRangeCm = 500.0;
+		/** Top of a barrel's water above the ground. */
+		constexpr double BarrelWaterHeightCm = 80.0;
+		/** A smashed barrel's water flies out in this many parcels. */
+		constexpr int SpillParcels = 6;
 		constexpr double BrazierPedestalRadiusCm = 30.0;
 		constexpr double BrazierPedestalHeightCm = 100.0;
 		constexpr double MinWallDistanceCm = 260.0;
@@ -257,6 +263,10 @@ namespace BendingSandbox3D
 			Body.HalfHeightCm = Spec.HalfHeightCm;
 			Body.MassKg = Spec.MassKg;
 			Body.bStatic = Spec.bStatic;
+			Body.YawRad = Placement.YawDeg * Pi / 180.0;
+			Body.Variant = Placement.Variant;
+			Body.WaterKg = Spec.WaterKg;
+			// Lanterns stand unlit until a firebender lights them.
 			AddBody(Body, Volume);
 		}
 	}
@@ -291,6 +301,7 @@ namespace BendingSandbox3D
 	void FSandbox::RemoveBody(int Index)
 	{
 		World.RemoveVolume(Bodies[Index].Volume);
+		Bodies[Index].Burn.RemoveFlame(World);
 		Bodies[Index].bAlive = false;
 		Bodies[Index].Volume = FHandle();
 	}
@@ -408,7 +419,8 @@ namespace BendingSandbox3D
 	{
 		for (int Index = 0; Index < NumBodies; ++Index)
 		{
-			if (Bodies[Index].bAlive && Bodies[Index].Volume == Handle)
+			// A burning prop's flame counts as part of it.
+			if (Bodies[Index].bAlive && (Bodies[Index].Volume == Handle || (Handle.IsSet() && Bodies[Index].Burn.Flame == Handle)))
 			{
 				return &Bodies[Index];
 			}
@@ -516,6 +528,8 @@ namespace BendingSandbox3D
 		World.Advance(Dt);
 		Whip.PostStep(World);
 		SyncVolumesOut();
+		UpdateCombustion(Dt);
+		ProcessBreaks();
 		CollectEvents(Dt);
 
 		if (Whip.IsActive() && Whip.ShouldCollapse(World))
@@ -701,17 +715,31 @@ namespace BendingSandbox3D
 				break;
 			}
 			FVec3 Source;
-			const int Pond = FindWaterSource(Layout, Player.HandCm, Tuning.WhipDrawRangeCm, Source);
-			if (Pond < 0 || Layout.Ponds[Pond].WaterKg < Tuning.WhipWaterKg)
+			int Pond = FindWaterSource(Layout, Player.HandCm, Tuning.WhipDrawRangeCm, Source);
+			if (Pond >= 0 && Layout.Ponds[Pond].WaterKg < Tuning.WhipWaterKg)
 			{
-				AddMessage("No water within 15 m: go to a pond");
+				Pond = -1;
+			}
+			// No pond in reach: a water barrel close by will do.
+			const int Barrel = Pond < 0 ? FindWaterBarrel(Player.HandCm, Tuning.WhipWaterKg, Source) : -1;
+			if (Pond < 0 && Barrel < 0)
+			{
+				AddMessage("No water within 15 m: go to a pond or a water barrel");
 				break;
 			}
 			if (Whip.Create(World, Source, Player.HandCm, Tuning.WhipWaterKg, 288.15))
 			{
-				Layout.Ponds[Pond].WaterKg -= Tuning.WhipWaterKg;
+				if (Pond >= 0)
+				{
+					Layout.Ponds[Pond].WaterKg -= Tuning.WhipWaterKg;
+				}
+				else
+				{
+					Bodies[Barrel].WaterKg -= Tuning.WhipWaterKg;
+					Bodies[Barrel].MassKg = KMax(Bodies[Barrel].MassKg - Tuning.WhipWaterKg, 1.0);
+				}
 				bWhipCreatedThisMove = true;
-				AddMessageNumber("Drew ", Tuning.WhipWaterKg, " kg of water from the pond");
+				AddMessageNumber("Drew ", Tuning.WhipWaterKg, Pond >= 0 ? " kg of water from the pond" : " kg of water from the barrel");
 			}
 			break;
 		}
@@ -1706,6 +1734,185 @@ namespace BendingSandbox3D
 		}
 	}
 
+	// ---------------------------------------------------------------------------------------------------- Burning and smashing
+
+	void FSandbox::GetCombustionPoints(const FBody& Body, FVec3& OutCenterCm, FVec3& OutFlameCm) const
+	{
+		const FArenaPropSpec& Spec = GetArenaPropSpec(Body.Prop);
+		if (Body.Prop == EArenaProp::Banner)
+		{
+			// The cloth hangs off the pole's cross-bar; it burns from the bottom edge up.
+			const FVec3 Offset(KCos(Body.YawRad + 0.5 * Pi) * 4.0, KSin(Body.YawRad + 0.5 * Pi) * 4.0, 0.0);
+			OutCenterCm = Body.AnchorCm + Offset + FVec3(0.0, 0.0, 0.5 * (BannerClothTopCm + BannerClothBottomCm));
+			const double Edge = BannerClothBottomCm + (BannerClothTopCm - BannerClothBottomCm) * KMin(Body.Burn.GetBurntFraction(Spec.Combustion), 0.92);
+			OutFlameCm = Body.AnchorCm + Offset + FVec3(0.0, 0.0, Edge + 25.0);
+			return;
+		}
+		if (Body.bStatic)
+		{
+			OutCenterCm = Body.LocationCm;
+			OutFlameCm = Body.AnchorCm + FVec3(0.0, 0.0, Spec.FlameHeightCm);
+			if (Body.Prop == EArenaProp::Lantern)
+			{
+				OutCenterCm = OutFlameCm;
+			}
+			return;
+		}
+		OutCenterCm = Body.LocationCm;
+		OutFlameCm = Body.LocationCm + FVec3(0.0, 0.0, Spec.FlameHeightCm - Spec.CenterHeightCm);
+	}
+
+	void FSandbox::AddPropEffect(ESandboxEffect Effect, const FBody& Body, const FVec3& LocationCm, double EnergyJ)
+	{
+		AddEffect(Effect, LocationCm, EnergyJ);
+		FrameEvents[NumFrameEvents - 1].MassKg = static_cast<double>(Body.Prop);
+	}
+
+	void FSandbox::UpdateCombustion(double Dt)
+	{
+		for (int Index = 0; Index < NumBodies; ++Index)
+		{
+			FBody& Body = Bodies[Index];
+			if (!Body.bAlive || Body.Kind != EBodyKind::Prop)
+			{
+				continue;
+			}
+			const FArenaPropSpec& Spec = GetArenaPropSpec(Body.Prop);
+			if (!Spec.Combustion.IsFlammable())
+			{
+				continue;
+			}
+			FVec3 Center;
+			FVec3 FlameSpot;
+			GetCombustionPoints(Body, Center, FlameSpot);
+			const bool bLantern = Body.Prop == EArenaProp::Lantern;
+			char Text[96];
+			switch (Body.Burn.Update(World, Spec.Combustion, Center, FlameSpot, Dt))
+			{
+			case ECombustionEvent::Ignited:
+				AddPropEffect(ESandboxEffect::Ignite, Body, FlameSpot, 0.0);
+				if (bLantern)
+				{
+					AddMessage("Lantern lit");
+				}
+				else
+				{
+					Append(Text, Append(Text, 0, sizeof(Text), Spec.Name), sizeof(Text), " caught fire!");
+					AddMessage(Text);
+				}
+				break;
+
+			case ECombustionEvent::Extinguished:
+				AddPropEffect(ESandboxEffect::Douse, Body, FlameSpot, 0.0);
+				if (bLantern)
+				{
+					AddMessage("Lantern put out");
+				}
+				else
+				{
+					Append(Text, Append(Text, 0, sizeof(Text), "Water put out the "), sizeof(Text), Spec.Name);
+					AddMessage(Text);
+				}
+				break;
+
+			case ECombustionEvent::BurntOut:
+				AddPropEffect(ESandboxEffect::BurntOut, Body, FlameSpot, Body.Burn.ReleasedJ);
+				Append(Text, Append(Text, 0, sizeof(Text), Spec.Name), sizeof(Text), " burnt away");
+				AddMessage(Text);
+				// A burnt crate falls apart; banners keep their pole, straw leaves ash, dummies stand charred.
+				if (Body.Prop == EArenaProp::Crate)
+				{
+					RemoveBody(Index);
+				}
+				break;
+
+			default:
+				break;
+			}
+		}
+	}
+
+	void FSandbox::ProcessBreaks()
+	{
+		for (int Index = 0; Index < NumBodies; ++Index)
+		{
+			if (Bodies[Index].bAlive && Bodies[Index].bBreakPending)
+			{
+				SmashBody(Index);
+			}
+		}
+	}
+
+	void FSandbox::SmashBody(int Index)
+	{
+		FBody& Body = Bodies[Index];
+		const FArenaPropSpec& Spec = GetArenaPropSpec(Body.Prop);
+		const FVec3 Spot = Body.LocationCm;
+		const double Ground = Terrain.GetHeightAt(Spot.X, Spot.Y);
+
+		// A barrel's water flies out in a ring and soaks everything round it.
+		double SpilledKg = 0.0;
+		if (Body.WaterKg > 0.5)
+		{
+			SpilledKg = Body.WaterKg;
+			for (int Parcel = 0; Parcel < SpillParcels; ++Parcel)
+			{
+				const double Angle = 2.0 * Pi * Parcel / SpillParcels + 0.4;
+				const FVec3 Out(KCos(Angle), KSin(Angle), 0.0);
+				FVolume Water = MakeWaterBall(SpilledKg / SpillParcels, 288.15, Spot + Out * 30.0 + FVec3(0.0, 0.0, 20.0),
+					Out * 320.0 + Body.VelocityCmS * 0.5 + FVec3(0.0, 0.0, 260.0));
+				SpawnProjectile(EProjectileKind::Water, Water);
+			}
+		}
+		// A burning crate scatters its fire on the ground.
+		if (Body.Burn.bBurning)
+		{
+			FVolume Flame = MakeFlame(Spec.Combustion.FlameMassKg, Spec.Combustion.FlameTemperatureK, FVec3(Spot.X, Spot.Y, Ground), FVec3());
+			Flame.LocationCm.Z = Ground + 0.55 * Flame.RadiusCm;
+			const int Dropped = SpawnProjectile(EProjectileKind::GroundFlame, Flame);
+			if (Dropped >= 0)
+			{
+				Projectiles[Dropped].bLanded = true;
+				Projectiles[Dropped].FuelJ = Tuning.GroundFlameFuelJ;
+			}
+		}
+		AddPropEffect(ESandboxEffect::Smash, Body, Spot, SpilledKg);
+		if (SpilledKg > 0.0)
+		{
+			AddMessageNumber("The barrel burst: ", SpilledKg, " kg of water");
+		}
+		else
+		{
+			char Text[96];
+			Append(Text, Append(Text, 0, sizeof(Text), Spec.Name), sizeof(Text), " smashed");
+			AddMessage(Text);
+		}
+		RemoveBody(Index);
+	}
+
+	int FSandbox::FindWaterBarrel(const FVec3& FromCm, double MinWaterKg, FVec3& OutSourceCm) const
+	{
+		int Best = -1;
+		double BestDistance = BarrelDrawRangeCm;
+		for (int Index = 0; Index < NumBodies; ++Index)
+		{
+			const FBody& Body = Bodies[Index];
+			if (!Body.bAlive || Body.Kind != EBodyKind::Prop || Body.Prop != EArenaProp::WaterBarrel || Body.WaterKg < MinWaterKg)
+			{
+				continue;
+			}
+			const FVec3 Top = Body.LocationCm + FVec3(0.0, 0.0, BarrelWaterHeightCm - GetArenaPropSpec(Body.Prop).CenterHeightCm);
+			const double D = Distance(Top, FromCm);
+			if (D < BestDistance)
+			{
+				BestDistance = D;
+				Best = Index;
+				OutSourceCm = Top;
+			}
+		}
+		return Best;
+	}
+
 	// ---------------------------------------------------------------------------------------------------- Projectiles
 
 	void FSandbox::UpdateProjectiles(double Dt)
@@ -1929,6 +2136,12 @@ namespace BendingSandbox3D
 				if (Into < 0.0)
 				{
 					Body.VelocityCmS -= Normal * (Into * (Into < -150.0 ? 1.25 : 1.0));
+					// Thrown down hard, it smashes on the ground.
+					const double BreakSpeedMs = Body.Kind == EBodyKind::Prop ? GetArenaPropSpec(Body.Prop).BreakSpeedMs : 0.0;
+					if (BreakSpeedMs > 0.0 && -Into > MToCm(BreakSpeedMs))
+					{
+						Body.bBreakPending = true;
+					}
 				}
 				FVec3 Tangent = Body.VelocityCmS - Normal * Body.VelocityCmS.Dot(Normal);
 				// Rolling resistance, higher in mud.
@@ -1991,6 +2204,18 @@ namespace BendingSandbox3D
 					const double Impulse = -1.2 * Closing / (InvA + InvB);
 					A.VelocityCmS -= Normal * (Impulse * InvA);
 					B.VelocityCmS += Normal * (Impulse * InvB);
+					// Struck hard enough, a crate or barrel smashes.
+					FBody* const Pair[2] = { &A, &B };
+					const double PairInverseMass[2] = { InvA, InvB };
+					for (int Side = 0; Side < 2; ++Side)
+					{
+						FBody& Struck = *Pair[Side];
+						const double BreakSpeedMs = Struck.Kind == EBodyKind::Prop ? GetArenaPropSpec(Struck.Prop).BreakSpeedMs : 0.0;
+						if (BreakSpeedMs > 0.0 && Impulse * PairInverseMass[Side] > MToCm(BreakSpeedMs))
+						{
+							Struck.bBreakPending = true;
+						}
+					}
 					if (A.Prop == EArenaProp::Dummy)
 					{
 						A.TiltRate[0] -= Normal.Y * Impulse * InvA * 0.01;
@@ -2064,6 +2289,11 @@ namespace BendingSandbox3D
 			{
 				const FVec3 DeltaV = Update.FrameImpulseKgCmS / KMax(Body.MassKg, 0.01);
 				Body.VelocityCmS += DeltaV;
+				const double BreakSpeedMs = Body.Kind == EBodyKind::Prop ? GetArenaPropSpec(Body.Prop).BreakSpeedMs : 0.0;
+				if (BreakSpeedMs > 0.0 && DeltaV.Size() > MToCm(BreakSpeedMs))
+				{
+					Body.bBreakPending = true;
+				}
 				if (Body.Prop == EArenaProp::Dummy)
 				{
 					// Pushed high on its body, the dummy rocks.
@@ -2103,7 +2333,7 @@ namespace BendingSandbox3D
 		{
 			const FReactionEvent& Event = Events[Index];
 			// Bent flames burning out in flight are not news (braziers report going out themselves).
-			if (Event.Type == EReactionType::Extinguished && FindProjectileByVolume(Event.VolumeA) >= 0)
+			if (Event.Type == EReactionType::Extinguished && (FindProjectileByVolume(Event.VolumeA) >= 0 || FindBodyByVolume(Event.VolumeA)))
 			{
 				continue;
 			}

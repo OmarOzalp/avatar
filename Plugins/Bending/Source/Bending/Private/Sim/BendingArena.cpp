@@ -39,6 +39,22 @@ namespace BendingSim
 			return Spec;
 		}
 
+		FCombustionSpec MakeCombustion(double IgnitionJ, double BurnSeconds, double FlameMassKg, double FlameTemperatureK, double ReachCm,
+			double HeatingWPerK)
+		{
+			FCombustionSpec Combustion;
+			Combustion.HeatingWPerK = HeatingWPerK;
+			Combustion.IgnitionJ = IgnitionJ;
+			Combustion.BurnSeconds = BurnSeconds;
+			Combustion.FlameMassKg = FlameMassKg;
+			Combustion.FlameTemperatureK = FlameTemperatureK;
+			Combustion.ReachCm = ReachCm;
+			// Enough to hold the flame at temperature in the open (a brazier's 0.5 kg flame needs about 600 kW) while the
+			// prop it burns on soaks up heat from it.
+			Combustion.MaxBurnPowerW = 4.0e6 * FlameMassKg + 1.0e5;
+			return Combustion;
+		}
+
 		struct FSpecTable
 		{
 			FArenaPropSpec Specs[static_cast<int>(EArenaProp::Count)];
@@ -59,6 +75,44 @@ namespace BendingSim
 				FArenaPropSpec Ice = MakeSpec("Ice block", ESubstance::Ice, 40.0, 917.0, 0.0, 0.0, true);
 				Ice.TemperatureK = 263.15;
 				Specs[static_cast<int>(EArenaProp::IceBlock)] = Ice;
+
+				// Dummies are wood and straw: slow to catch, then they char.
+				FArenaPropSpec& Dummy = Specs[static_cast<int>(EArenaProp::Dummy)];
+				Dummy.Combustion = MakeCombustion(90.0e3, 12.0, 0.3, 1250.0, 70.0, 150.0);
+				Dummy.FlameHeightCm = 120.0;
+
+				// The banner's volume is its wooden pole; the cloth is what burns.
+				FArenaPropSpec Banner = MakeSpec("Banner", ESubstance::Earth, 15.0, 600.0, 0.0, 210.0, true);
+				Banner.Combustion = MakeCombustion(30.0e3, 7.0, 0.12, 1200.0, 115.0, 200.0);
+				Banner.FlameHeightCm = BannerClothBottomCm;
+				Specs[static_cast<int>(EArenaProp::Banner)] = Banner;
+
+				// Stone lantern with a wick that burns for as long as it is left lit.
+				FArenaPropSpec Lantern = MakeSpec("Stone lantern", ESubstance::Earth, 120.0, 2400.0, 0.02, 45.0, true);
+				Lantern.Combustion = MakeCombustion(5.0e3, 1.0e9, 0.02, 1100.0, 45.0, 300.0);
+				Lantern.Combustion.MaxBurnPowerW = 1.0e5;
+				// Its flame sits just clear of the stone (the light is drawn in the lamp box below it).
+				Lantern.FlameHeightCm = 160.0;
+				Specs[static_cast<int>(EArenaProp::Lantern)] = Lantern;
+
+				// Straw: catches at a touch and burns big and long.
+				FArenaPropSpec Straw = MakeSpec("Straw bale", ESubstance::Earth, 30.0, 120.0, 0.0, 0.0, true);
+				Straw.Combustion = MakeCombustion(40.0e3, 14.0, 0.6, 1350.0, 90.0, 400.0);
+				Straw.FlameHeightCm = 60.0;
+				Specs[static_cast<int>(EArenaProp::StrawBale)] = Straw;
+
+				// A 50 cm crate of boards (mostly air inside): smashes at 4.5 m/s, burns.
+				FArenaPropSpec Crate = MakeSpec("Crate", ESubstance::Earth, 20.0, 160.0, 0.0, 0.0, false);
+				Crate.Combustion = MakeCombustion(60.0e3, 12.0, 0.3, 1250.0, 60.0, 250.0);
+				Crate.BreakSpeedMs = 4.5;
+				Crate.FlameHeightCm = 45.0;
+				Specs[static_cast<int>(EArenaProp::Crate)] = Crate;
+
+				// 20 kg of staves round 60 kg of water: too wet to burn, bursts at 3.5 m/s.
+				FArenaPropSpec Barrel = MakeSpec("Water barrel", ESubstance::Earth, 80.0, 900.0, 0.0, 22.0, false);
+				Barrel.BreakSpeedMs = 3.5;
+				Barrel.WaterKg = 60.0;
+				Specs[static_cast<int>(EArenaProp::WaterBarrel)] = Barrel;
 			}
 		};
 
@@ -79,12 +133,38 @@ namespace BendingSim
 			Pond.CenterCm.Z = Pond.SurfaceHeightCm;
 		}
 
-		void AddProp(FArenaLayout& Layout, EArenaProp Kind, double X, double Y)
+		void AddProp(FArenaLayout& Layout, EArenaProp Kind, double X, double Y, double YawDeg = 0.0, int Variant = 0)
 		{
 			if (Layout.NumProps < FArenaLayout::MaxProps)
 			{
-				Layout.Props[Layout.NumProps++] = { Kind, FVec3(X, Y, 0.0) };
+				FArenaPropPlacement& Placement = Layout.Props[Layout.NumProps++];
+				Placement.Kind = Kind;
+				Placement.LocationCm = FVec3(X, Y, 0.0);
+				Placement.YawDeg = YawDeg;
+				Placement.Variant = Variant;
 			}
+		}
+
+		/** Clear of ponds (by Margin pond radii) and of the props placed so far (by ClearanceCm). */
+		bool IsClearSpot(const FArenaLayout& Layout, double X, double Y, double PondMargin, double ClearanceCm)
+		{
+			for (int Index = 0; Index < Layout.NumPonds; ++Index)
+			{
+				const FArenaPond& Pond = Layout.Ponds[Index];
+				if (KSqrt((X - Pond.CenterCm.X) * (X - Pond.CenterCm.X) + (Y - Pond.CenterCm.Y) * (Y - Pond.CenterCm.Y)) < PondMargin * Pond.RadiusCm)
+				{
+					return false;
+				}
+			}
+			for (int Index = 0; Index < Layout.NumProps; ++Index)
+			{
+				const FVec3& Other = Layout.Props[Index].LocationCm;
+				if (KSqrt((X - Other.X) * (X - Other.X) + (Y - Other.Y) * (Y - Other.Y)) < ClearanceCm)
+				{
+					return false;
+				}
+			}
+			return true;
 		}
 
 		FArenaLayout BuildTrainingGround()
@@ -117,6 +197,49 @@ namespace BendingSim
 			AddProp(Layout, EArenaProp::Boulder, -1550.0, 150.0);
 			AddProp(Layout, EArenaProp::Clod, 250.0, 550.0);
 			AddProp(Layout, EArenaProp::Clod, -350.0, 850.0);
+
+			// Things to burn, smash and soak. Fire practice yard: straw and crates close enough for fire to spread.
+			AddProp(Layout, EArenaProp::StrawBale, 2350.0, -950.0, 20.0);
+			AddProp(Layout, EArenaProp::StrawBale, 2470.0, -1040.0, -15.0);
+			AddProp(Layout, EArenaProp::StrawBale, 2600.0, -1130.0, 35.0);
+			AddProp(Layout, EArenaProp::Crate, 2235.0, -1005.0, 12.0);
+			AddProp(Layout, EArenaProp::Crate, 2300.0, -1075.0, -20.0);
+			AddProp(Layout, EArenaProp::Crate, 2205.0, -1095.0, 40.0);
+			// Crates by the rocks, to smash with them.
+			AddProp(Layout, EArenaProp::Crate, 950.0, -880.0, 8.0);
+			AddProp(Layout, EArenaProp::Crate, 1030.0, -950.0, -25.0);
+			AddProp(Layout, EArenaProp::Crate, 960.0, -1020.0, 30.0);
+			// Water barrels by the braziers: burst one and it soaks everything round it.
+			AddProp(Layout, EArenaProp::WaterBarrel, 1250.0, -1080.0);
+			AddProp(Layout, EArenaProp::WaterBarrel, 1730.0, -1150.0);
+			AddProp(Layout, EArenaProp::WaterBarrel, -620.0, -1350.0);
+
+			// Banners in the four elements' colours round the ring, facing its centre.
+			const int BannerElements[8] = { 2, 1, 3, 4, 2, 1, 3, 4 };
+			for (int Index = 0; Index < 8; ++Index)
+			{
+				const double Angle = Pi / 8.0 + Index * Pi / 4.0;
+				const double X = KCos(Angle) * (FArenaLayout::RingRadiusCm + 200.0);
+				const double Y = KSin(Angle) * (FArenaLayout::RingRadiusCm + 200.0);
+				if (IsClearSpot(Layout, X, Y, 1.4, 260.0))
+				{
+					AddProp(Layout, EArenaProp::Banner, X, Y, Angle * 180.0 / Pi + 180.0, BannerElements[Index]);
+				}
+			}
+			// Stone lanterns flanking the four entrances to the ring.
+			for (int Entrance = 0; Entrance < 4; ++Entrance)
+			{
+				for (int Side = -1; Side <= 1; Side += 2)
+				{
+					const double Angle = Entrance * Pi / 2.0 + Side * 0.13;
+					const double X = KCos(Angle) * (FArenaLayout::RingRadiusCm + 60.0);
+					const double Y = KSin(Angle) * (FArenaLayout::RingRadiusCm + 60.0);
+					if (IsClearSpot(Layout, X, Y, 1.3, 160.0))
+					{
+						AddProp(Layout, EArenaProp::Lantern, X, Y, Angle * 180.0 / Pi);
+					}
+				}
+			}
 			return Layout;
 		}
 

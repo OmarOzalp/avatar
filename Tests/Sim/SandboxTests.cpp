@@ -482,6 +482,217 @@ namespace
 		ExpectTrue("fire thrown in makes a fire tornado", FireKg > 0.05);
 	}
 
+
+	// ---------------------------------------------------------------------------------------------------- Interactive props
+
+	/** Stands Distance cm from a prop, between it and the ring's centre, facing it. */
+	void StandBefore(const FBody& Body, double DistanceCm)
+	{
+		const FVec3 Flat2(Body.AnchorCm.X, Body.AnchorCm.Y, 0.0);
+		const FVec3 Toward = Flat2.Size() > 1.0 ? Flat2.GetSafeNormal() : FVec3(1.0, 0.0, 0.0);
+		const FVec3 Spot = Flat2 - Toward * DistanceCm;
+		Teleport(Spot.X, Spot.Y, KAtan2(Toward.Y, Toward.X) * 180.0 / Pi);
+	}
+
+	FVec3 BannerCloth(const FBody& Banner)
+	{
+		return Banner.AnchorCm + FVec3(0.0, 0.0, 0.5 * (BannerClothTopCm + BannerClothBottomCm));
+	}
+
+	/** Draws a whip at the near pond (the whip follows the bender wherever it is teleported). */
+	void DrawWhipAtPond()
+	{
+		Teleport(700.0, 450.0, 90.0);
+		SetStance(ETechniqueElement::Water);
+		Press(ETechniqueSlot::Primary, Ground(700.0, -400.0), 1.2);
+	}
+
+	void BannersBurnAway()
+	{
+		SimTest::Section("Banners burn; water saves them");
+		GSandbox.Init();
+		int Banners = 0;
+		while (FindProp(EArenaProp::Banner, Banners) >= 0)
+		{
+			++Banners;
+		}
+		ExpectTrue("banners stand round the ring", Banners >= 5);
+		const int Banner = FindProp(EArenaProp::Banner, 0);
+		StandBefore(GSandbox.Bodies[Banner], 700.0);
+		SetStance(ETechniqueElement::Fire);
+		const FVec3 Cloth = BannerCloth(GSandbox.Bodies[Banner]);
+		Run(LookAt(Cloth), 0.6);
+		Press(ETechniqueSlot::Primary, Cloth, 0.8);
+		ExpectTrue("one fire blast sets the cloth alight", GSandbox.Bodies[Banner].Burn.bBurning);
+		ExpectTrue("and says so", HasMessage("Banner caught fire"));
+		Run(LookAt(Cloth), 8.0);
+		const FBody& Burnt = GSandbox.Bodies[Banner];
+		std::printf("    banner burnt away after 7 s, releasing %.1f MJ\n", Burnt.Burn.ReleasedJ / 1.0e6);
+		ExpectTrue("left burning, the cloth burns away", Burnt.bAlive && Burnt.Burn.bBurntOut);
+
+		// Another banner, lit, then lashed with water before it is gone. (Light it first: a fire blast thrown
+		// through a circling water whip boils away before it gets anywhere.)
+		const int Second = FindProp(EArenaProp::Banner, 1);
+		StandBefore(GSandbox.Bodies[Second], 700.0);
+		const FVec3 Cloth2 = BannerCloth(GSandbox.Bodies[Second]);
+		Run(LookAt(Cloth2), 0.6);
+		Press(ETechniqueSlot::Primary, Cloth2, 0.6);
+		ExpectTrue("the second banner catches", GSandbox.Bodies[Second].Burn.bBurning);
+		DrawWhipAtPond();
+		StandBefore(GSandbox.Bodies[Second], 420.0);
+		Run(LookAt(Cloth2), 0.3);
+		int Lashes = 0;
+		while (Lashes < 4 && GSandbox.Bodies[Second].Burn.bBurning)
+		{
+			Press(ETechniqueSlot::Primary, Cloth2 - FVec3(0.0, 0.0, 60.0), 0.7);
+			++Lashes;
+		}
+		const double Saved = 1.0 - GSandbox.Bodies[Second].Burn.GetBurntFraction(GetArenaPropSpec(EArenaProp::Banner).Combustion);
+		std::printf("    put out in %d lash%s with %.0f%% of the cloth left\n", Lashes, Lashes == 1 ? "" : "es", Saved * 100.0);
+		ExpectTrue("lashing it with water puts it out", !GSandbox.Bodies[Second].Burn.bBurning && !GSandbox.Bodies[Second].Burn.bBurntOut);
+		ExpectTrue("the message says water did it", HasMessage("Water put out the Banner"));
+	}
+
+	void FireSpreadsThroughTheYard()
+	{
+		SimTest::Section("Fire spreads from straw to crates");
+		GSandbox.Init();
+		const int Bale = FindProp(EArenaProp::StrawBale, 0);
+		const FVec3 BaleAt = GSandbox.Bodies[Bale].LocationCm;
+		Teleport(BaleAt.X - 650.0, BaleAt.Y + 250.0, -20.0);
+		SetStance(ETechniqueElement::Fire);
+		Run(LookAt(BaleAt), 0.5);
+		Press(ETechniqueSlot::Primary, BaleAt, 0.8);
+		ExpectTrue("a fire blast lights the straw", GSandbox.Bodies[Bale].Burn.bBurning);
+		Run(LookAt(BaleAt), 9.0);
+		int Caught = 0;
+		int Yard = 0;
+		for (int Index = 0; Index < GSandbox.NumBodies; ++Index)
+		{
+			const FBody& Body = GSandbox.Bodies[Index];
+			const bool bYard = (Body.Prop == EArenaProp::StrawBale || Body.Prop == EArenaProp::Crate) && Body.Kind == EBodyKind::Prop
+				&& Distance(Body.AnchorCm, BaleAt) < 600.0;
+			if (bYard)
+			{
+				++Yard;
+				// A crate that burnt away is gone (not alive) but it did catch.
+				Caught += (Body.Burn.bBurning || Body.Burn.bBurntOut || !Body.bAlive) ? 1 : 0;
+			}
+		}
+		std::printf("    one blast: %d of the yard's %d straw bales and crates caught within 9 s\n", Caught, Yard);
+		ExpectTrue("the fire spreads to its neighbours", Caught >= 3);
+	}
+
+	void CratesSmashBarrelsBurst()
+	{
+		SimTest::Section("Crates smash, barrels burst");
+		GSandbox.Init();
+		int Crates = 0;
+		while (FindProp(EArenaProp::Crate, Crates) >= 0)
+		{
+			++Crates;
+		}
+		const int Crate = FindProp(EArenaProp::Crate, 3);
+		const FVec3 CrateAt = GSandbox.Bodies[Crate].LocationCm;
+		Teleport(CrateAt.X - 620.0, CrateAt.Y + 60.0, 0.0);
+		SetStance(ETechniqueElement::Earth);
+		Run(LookAt(CrateAt), 0.4);
+		Press(ETechniqueSlot::Primary, CrateAt + FVec3(0.0, 0.0, 20.0), 2.0);
+		int After = 0;
+		while (FindProp(EArenaProp::Crate, After) >= 0)
+		{
+			++After;
+		}
+		ExpectTrue("a thrown rock smashes a crate", After < Crates && HasMessage("Crate smashed"));
+		// An earthquake in the fire yard smashes the crates there.
+		const FVec3 Pile = GSandbox.Bodies[FindProp(EArenaProp::Crate, 0)].LocationCm;
+		Teleport(Pile.X - 120.0, Pile.Y + 40.0, 0.0);
+		Run(LookAt(Pile), 0.3);
+		Press(ETechniqueSlot::Signature, Pile, 1.5);
+		int AfterQuake = 0;
+		while (FindProp(EArenaProp::Crate, AfterQuake) >= 0)
+		{
+			++AfterQuake;
+		}
+		std::printf("    crates: %d -> %d after a rock -> %d after an earthquake\n", Crates, After, AfterQuake);
+		ExpectTrue("an earthquake smashes the crates beside it", AfterQuake < After);
+
+		// A fresh field for the barrel (a rock that smashed the crates may have rolled on into one).
+		GSandbox.Init();
+		const int Barrel = FindProp(EArenaProp::WaterBarrel, 0);
+		const FVec3 BarrelAt = GSandbox.Bodies[Barrel].LocationCm;
+		const FVec3 BarrelGround = Ground(BarrelAt.X, BarrelAt.Y);
+		const auto WettestRound = [&]()
+		{
+			double Wettest = 0.0;
+			for (int Step = 0; Step < 24; ++Step)
+			{
+				for (double Radius = 0.0; Radius <= 250.0; Radius += 50.0)
+				{
+					const double Angle = 2.0 * Pi * Step / 24.0;
+					Wettest = KMax(Wettest, GSandbox.World.GetSurfaceSaturationAt(Ground(BarrelGround.X + KCos(Angle) * Radius, BarrelGround.Y + KSin(Angle) * Radius)));
+				}
+			}
+			return Wettest;
+		};
+		const double DryBefore = WettestRound();
+		Teleport(BarrelAt.X - 500.0, BarrelAt.Y + 80.0, 0.0);
+		SetStance(ETechniqueElement::Earth);
+		Run(LookAt(BarrelAt), 0.4);
+		Press(ETechniqueSlot::Primary, BarrelAt + FVec3(0.0, 0.0, 20.0), 2.5);
+		const double WetAfter = WettestRound();
+		std::printf("    a thrown rock burst the barrel: ground saturation %.2f -> %.2f\n", DryBefore, WetAfter);
+		ExpectTrue("a thrown rock bursts a water barrel", FindProp(EArenaProp::WaterBarrel, 2) < 0 && HasMessage("The barrel burst"));
+		ExpectTrue("its water soaks the ground round it", WetAfter > DryBefore + 0.1);
+	}
+
+	void LanternsAndBarrels()
+	{
+		SimTest::Section("Lanterns light; barrels are a water source");
+		GSandbox.Init();
+		const int Lantern = FindProp(EArenaProp::Lantern, 0);
+		ExpectTrue("lanterns stand unlit", Lantern >= 0 && !GSandbox.Bodies[Lantern].Burn.bBurning);
+		const FVec3 Wick = GSandbox.Bodies[Lantern].AnchorCm + FVec3(0.0, 0.0, GetArenaPropSpec(EArenaProp::Lantern).FlameHeightCm);
+		StandBefore(GSandbox.Bodies[Lantern], -420.0);
+		SetStance(ETechniqueElement::Fire);
+		Run(LookAt(Wick), 0.4);
+		Press(ETechniqueSlot::Primary, Wick, 0.6);
+		ExpectTrue("a fire blast lights a lantern", GSandbox.Bodies[Lantern].Burn.bBurning && HasMessage("Lantern lit"));
+		Run(LookAt(Wick), 20.0);
+		ExpectTrue("and it stays lit", GSandbox.Bodies[Lantern].Burn.bBurning);
+
+		// Far from both ponds, a barrel gives a waterbender enough for a whip.
+		const int Barrel = FindProp(EArenaProp::WaterBarrel, 2);
+		const FVec3 BarrelAt = GSandbox.Bodies[Barrel].LocationCm;
+		Teleport(BarrelAt.X + 250.0, BarrelAt.Y, 180.0);
+		SetStance(ETechniqueElement::Water);
+		Press(ETechniqueSlot::Primary, BarrelAt + FVec3(-800.0, 0.0, 0.0), 1.2);
+		std::printf("    whip drawn from a barrel: %.0f kg left in it\n", GSandbox.Bodies[Barrel].WaterKg);
+		ExpectTrue("a whip can be drawn from a water barrel", GSandbox.Whip.IsActive() && HasMessage("from the barrel"));
+		ExpectNear("the barrel gives up 20 kg", GSandbox.Bodies[Barrel].WaterKg, 40.0, 0.01);
+	}
+
+	void DummiesBurnAndChar()
+	{
+		SimTest::Section("Dummies burn and char");
+		GSandbox.Init();
+		const int Dummy = FindProp(EArenaProp::Dummy, 0);
+		const FVec3 DummyAt = GSandbox.Bodies[Dummy].LocationCm;
+		Teleport(DummyAt.X - 700.0, DummyAt.Y, 0.0);
+		SetStance(ETechniqueElement::Fire);
+		Run(LookAt(DummyAt), 0.4);
+		int Blasts = 0;
+		while (Blasts < 6 && !GSandbox.Bodies[Dummy].Burn.bBurning)
+		{
+			Press(ETechniqueSlot::Primary, DummyAt, 0.55);
+			++Blasts;
+		}
+		std::printf("    the dummy caught after %d fire blast%s\n", Blasts, Blasts == 1 ? "" : "s");
+		ExpectTrue("fire blasts set a dummy alight", GSandbox.Bodies[Dummy].Burn.bBurning);
+		Run(LookAt(DummyAt), 13.0);
+		ExpectTrue("it burns down and stands there charred", GSandbox.Bodies[Dummy].bAlive && GSandbox.Bodies[Dummy].Burn.bBurntOut);
+	}
+
 	void FreezeCostsLatentHeat()
 	{
 		SimTest::Section("Freeze the whip");
@@ -653,6 +864,11 @@ int main(int ArgCount, char** Args)
 	EarthquakeThrowsByMass();
 	FireRingAndJetDash();
 	AirScooterAndTornado();
+	BannersBurnAway();
+	FireSpreadsThroughTheYard();
+	CratesSmashBarrelsBurst();
+	LanternsAndBarrels();
+	DummiesBurnAndChar();
 	FreezeCostsLatentHeat();
 	WaterBlastMakesMud();
 	AirThrowsDummiesNotBoulders();

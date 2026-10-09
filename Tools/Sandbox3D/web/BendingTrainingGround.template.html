@@ -405,6 +405,7 @@ body {
       <kbd>LMB RMB Q E</kbd><span>Your stance's techniques (shown at the bottom)</span>
       <kbd>F</kbd><span>Signature move: Ice Daggers, Earthquake, Ring of Fire, Tornado</span>
       <kbd>H · R · Esc</kbd><span>Technique list · reset the field · free the mouse</span>
+      <kbd>The field</kbd><span>Burn banners and straw, smash crates, burst water barrels, light the lanterns</span>
     </div>
     <button class="go" id="play" type="button">Start training</button>
     <p class="fine" id="boot-note">Loading the physics…</p>
@@ -418,6 +419,7 @@ body {
     <h2>Techniques</h2>
     <div class="table-wrap"><table id="tech-table"><thead><tr><th>Technique</th><th>Key</th><th>Frames</th><th>What it does</th></tr></thead><tbody></tbody></table></div>
     <p class="fine">Work is billed on top of the flat cost: 5 kJ of motion or 250 kJ of heat buys one point of chi. Out of chi, techniques weaken instead of failing.</p>
+    <p class="fine"><b>The field reacts:</b> fire burns the banners, straw bales, crates and dummies (and spreads between them), lights the stone lanterns, and water puts all of it out. Thrown rocks and earthquakes smash crates and burst water barrels, which soak the ground. A waterbender can draw a whip from a barrel as well as a pond.</p>
     <button class="go" id="help-close" type="button">Back to training</button>
   </div>
 </div>
@@ -435,7 +437,10 @@ const ELEMENTS = { 2: { name: 'Water', key: '1', css: 'var(--water)', hex: 0x4aa
 const STANCE_ORDER = [2, 1, 3, 4];
 const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E', 'F'];
 const SUB = { EARTH: 1, WATER: 2, ICE: 3, STEAM: 4, FIRE: 5, AIR: 6 };
-const PROP = { STONE: 0, ROCK: 1, BOULDER: 2, CLOD: 3, DUMMY: 4, BRAZIER: 5, ICE: 6 };
+const PROP = { STONE: 0, ROCK: 1, BOULDER: 2, CLOD: 3, DUMMY: 4, BRAZIER: 5, ICE: 6, BANNER: 7, LANTERN: 8, STRAW: 9, CRATE: 10, BARREL: 11 };
+// Bodies as packed by sb_pack_bodies: 21 kinematic fields, then burn state, burnt and heat fractions, wetness, water
+// held, yaw and variant.
+const BODY_STRIDE = 28;
 const PROJ = { FIRE: 0, AIR: 1, WATER: 2, GROUND_FLAME: 3, SPRAY: 4, ICE_SHARD: 5 };
 const REACTION = ['None', 'Evaporation', 'Condensation', 'Melting', 'Freezing', 'Oxygenation', 'Saturation', 'MudFormed', 'Deflection', 'Erosion', 'Extinguished'];
 const SHORT_NAMES = { 'Water Whip': 'Whip', 'Freeze / Thaw': 'Freeze', 'Release': 'Release', 'Water Blast': 'Throw', 'Rock Throw': 'Rock',
@@ -579,9 +584,10 @@ function start() {
   `;
 
   // ---------------------------------------------------------------- Sky: gradient, sun, drifting clouds
-  const skyFragment = GLSL_NOISE + GLSL_SKY + `
+  const skyFragment = GLSL_SKY + `
     uniform float uTime;
     uniform float uClouds;
+    uniform sampler2D uCloudNoise;
     varying vec3 vDir;
     void main() {
       vec3 d = normalize(vDir);
@@ -590,9 +596,10 @@ function start() {
       c += vec3(1.0, 0.93, 0.78) * smoothstep(0.99955, 0.99978, s) * 40.0;
       if (d.y > 0.0 && uClouds > 0.5) {
         vec2 uv = d.xz / (d.y + 0.12) * 1.25 + vec2(uTime * 0.006, uTime * 0.0025);
-        float n = fbm(vec3(uv, uTime * 0.008));
+        // Tiling noise texture reads instead of per-pixel 3D noise: the sky covers most of the screen.
+        float n = (texture2D(uCloudNoise, uv * 0.11).r * 0.62 + texture2D(uCloudNoise, uv * 0.29 + vec2(uTime * 0.003, 0.0)).g * 0.38 - 0.45) * 1.9;
         float cover = smoothstep(0.06, 0.62, n);
-        float lit = clamp(0.5 + 0.5 * fbm(vec3(uv * 1.9 + 4.0, 1.0)) + 0.4 * pow(max(s, 0.0), 4.0), 0.0, 1.25);
+        float lit = clamp(0.5 + 0.5 * (texture2D(uCloudNoise, uv * 0.21 + 0.37).b - 0.5) * 1.8 + 0.4 * pow(max(s, 0.0), 4.0), 0.0, 1.25);
         vec3 cloud = mix(vec3(0.52, 0.57, 0.66), vec3(1.3, 1.26, 1.18), lit);
         c = mix(c, cloud, cover * smoothstep(0.0, 0.25, d.y) * 0.92);
       }
@@ -601,7 +608,9 @@ function start() {
       #include <encodings_fragment>
     }`;
   const skyVertex = `varying vec3 vDir; void main() { vDir = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }`;
-  const skyMat = new THREE.ShaderMaterial({ uniforms: { uTime, uSunDir, uClouds: { value: 1 } }, vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false });
+  // The cloud noise texture is made with the other procedural textures below, before the first frame.
+  const uCloudNoise = { value: null };
+  const skyMat = new THREE.ShaderMaterial({ uniforms: { uTime, uSunDir, uClouds: { value: 1 }, uCloudNoise }, vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(600, 48, 24), skyMat);
   sky.renderOrder = -10;
   sky.frustumCulled = false;
@@ -610,7 +619,7 @@ function start() {
     // Image-based lighting: everything glossy (water, ice, wet ground, bronze) reflects this sky.
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envScene = new THREE.Scene();
-    const envMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uSunDir, uClouds: { value: 0 } }, vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false });
+    const envMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uSunDir, uClouds: { value: 0 }, uCloudNoise }, vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false });
     envMat.toneMapped = false;
     envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), envMat));
     scene.environment = pmrem.fromScene(envScene, 0.02).texture;
@@ -705,6 +714,27 @@ function start() {
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const i = y * n + x, grain = 0.8 + 0.35 * Math.sin(x * 0.35 + f[i] * 9);
       d[i * 4] = 112 * grain; d[i * 4 + 1] = 80 * grain; d[i * 4 + 2] = 54 * grain; d[i * 4 + 3] = 255;
+    }
+  }, true);
+
+  // Crate boards: planks with dark seams and nail heads; barrel staves: vertical boards.
+  const crateTex = canvasTexture(256, (d, n) => {
+    const f = octaves(n, [4, 32], [0.6, 0.4], 61);
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const i = y * n + x, board = Math.floor(y / (n / 4)), seam = (y % (n / 4)) < 5 || x < 6 || x > n - 7;
+      const nail = ((x - 14) ** 2 + ((y % (n / 4)) - n / 8) ** 2 < 12) || ((x - n + 14) ** 2 + ((y % (n / 4)) - n / 8) ** 2 < 12);
+      const grain = (0.85 + 0.25 * Math.sin(x * 0.22 + f[i] * 8 + board * 3)) * (0.92 + 0.12 * ((board * 37) % 5) / 5);
+      const v = seam ? 0.45 : nail ? 0.3 : grain;
+      d[i * 4] = 196 * v; d[i * 4 + 1] = 142 * v; d[i * 4 + 2] = 84 * v; d[i * 4 + 3] = 255;
+    }
+  }, true);
+  const staveTex = canvasTexture(256, (d, n) => {
+    const f = octaves(n, [4, 32], [0.6, 0.4], 71);
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const i = y * n + x, stave = Math.floor(x / (n / 8)), seam = (x % (n / 8)) < 3;
+      const grain = (0.85 + 0.2 * Math.sin(y * 0.3 + f[i] * 7 + stave * 2)) * (0.9 + 0.1 * ((stave * 29) % 7) / 7);
+      const v = seam ? 0.5 : grain;
+      d[i * 4] = 150 * v; d[i * 4 + 1] = 102 * v; d[i * 4 + 2] = 62 * v; d[i * 4 + 3] = 255;
     }
   }, true);
 
@@ -979,13 +1009,17 @@ function start() {
   });
   const DRAW_RANGE_CM = 1500;
   // Distance (cm) from the bender's hand to the nearest pond's surface, and that pond.
+  const BARREL_RANGE_CM = 500;
   function nearestWater() {
     let best = Infinity, index = -1;
     ponds.forEach((p, i) => {
       const edge = Math.max(0, Math.hypot(P.x - p.x, P.y - p.y) - p.r), dz = P.z + 120 - p.z, d = Math.hypot(edge, dz);
       if (d < best) { best = d; index = i; }
     });
-    return { distance: best, pond: index };
+    // A water barrel close by works too.
+    let barrel = Infinity;
+    for (const s of barrelSources) barrel = Math.min(barrel, Math.hypot(P.x - s.x, P.y - s.y, P.z + 120 - s.z));
+    return { distance: best, pond: index, barrel };
   }
 
   // A ring wave on a pond at a kernel position (cm).
@@ -1152,9 +1186,62 @@ function start() {
     g.computeVertexNormals();
     return g;
   })();
-  function makeBody(kind, prop, radius, half, slot) {
+  const crateGeo = roundedBox(0.5, 0.5, 0.5, 0.03, 2);
+  const baleGeo = roundedBox(1.0, 0.55, 0.58, 0.08, 3);
+  const baleTwineGeo = new THREE.BoxGeometry(0.03, 0.57, 0.6);
+  const ashGeo = new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  const barrelGeo = lathe([[0, 0], [0.25, 0], [0.29, 0.12], [0.31, 0.45], [0.29, 0.78], [0.25, 0.9], [0, 0.9]], 18);
+  const hoopGeo = new THREE.TorusGeometry(1, 0.025, 4, 24).rotateX(Math.PI / 2);
+  const waterTopMat = new THREE.MeshStandardMaterial({ color: lin(0x2b8db8), roughness: 0.05, envMapIntensity: 1.6 });
+  const ironMat = toon(0x4a4a52, {}, 0.3);
+  const CHAR = new THREE.Color(0x15100c);
+  const WHITE = new THREE.Color(0xffffff);
+  // Where bent air is this frame (banners flap hard when it rushes past).
+  const airSpots = [];
+  // Fire darkens a prop toward charcoal and makes it glow with embers while it burns.
+  function charMaterial(material, base, burnt, burning, heat, t, seed) {
+    material.color.copy(base).lerp(CHAR, Math.min(1, burnt * 1.1 + heat * 0.15));
+    if (material.emissive) {
+      const embers = burning ? 0.55 + 0.35 * Math.sin(t * 9 + seed) * Math.sin(t * 5.3 + seed * 2) : Math.max(0, heat - 0.5) * 0.6;
+      material.emissive.setRGB(1.0, 0.32, 0.05).multiplyScalar(embers * Math.min(1, 0.25 + burnt));
+    }
+  }
+  function makeBody(kind, prop, radius, half, slot, variant) {
     const r = radius / 100;
     const shadowed = (m) => { m.castShadow = m.receiveShadow = true; return m; };
+    if (kind === 0 && prop === PROP.BANNER) return makeBanner(variant || 2);
+    if (kind === 0 && prop === PROP.LANTERN) return lantern();
+    if (kind === 0 && prop === PROP.CRATE) {
+      const m = shadowed(new THREE.Mesh(crateGeo, toon(0xffffff, { map: crateTex, emissive: new THREE.Color(0) }, 0.12)));
+      m.userData.base = new THREE.Color(0xffffff);
+      return m;
+    }
+    if (kind === 0 && prop === PROP.STRAW) {
+      const g = new THREE.Group();
+      const bale = shadowed(new THREE.Mesh(baleGeo, toon(0xfff0c8, { map: strawTex, emissive: new THREE.Color(0) })));
+      bale.position.y = 0.275;
+      g.add(bale);
+      for (const x of [-0.25, 0.25]) { const tw = new THREE.Mesh(baleTwineGeo, ropeMat); tw.position.set(x, 0.275, 0); bale.add(tw); tw.position.y = 0; }
+      const ash = new THREE.Mesh(ashGeo, toon(0x2a2622, { emissive: new THREE.Color(0) }));
+      ash.scale.set(0.55, 0.12, 0.38);
+      ash.visible = false;
+      g.add(ash);
+      g.userData.bale = bale;
+      g.userData.ash = ash;
+      g.userData.base = new THREE.Color(0xfff0c8);
+      return g;
+    }
+    if (kind === 0 && prop === PROP.BARREL) {
+      const g = new THREE.Group();
+      const body = shadowed(new THREE.Mesh(barrelGeo, toon(0xffffff, { map: staveTex }, 0.12)));
+      g.add(body);
+      for (const [y, rr] of [[0.14, 0.295], [0.45, 0.315], [0.76, 0.295]]) { const h = new THREE.Mesh(hoopGeo, ironMat); h.position.y = y; h.scale.setScalar(rr); g.add(h); }
+      const water = new THREE.Mesh(new THREE.CircleGeometry(0.245, 20).rotateX(-Math.PI / 2), waterTopMat);
+      water.position.y = 0.86;
+      g.add(water);
+      g.userData.water = water;
+      return g;
+    }
     if (kind === 1) { const m = shadowed(new THREE.Mesh(rockGeos[slot % 3], earthRockMat)); m.scale.setScalar(r); return m; }
     if (prop <= PROP.BOULDER) { const m = shadowed(new THREE.Mesh(rockGeos[slot % 3], stoneMats[slot % 3])); m.scale.setScalar(r * 1.05); return m; }
     if (prop === PROP.CLOD) { const m = shadowed(new THREE.Mesh(clodGeo, earthRockMat.clone())); m.scale.setScalar(r); return m; }
@@ -1164,10 +1251,13 @@ function start() {
       const h = half / 100;
       const add = (geo, mat, sx, sy, sz, x, y, z, rx = 0, rz = 0) => { const m = shadowed(new THREE.Mesh(geo, mat)); m.scale.set(sx, sy, sz); m.position.set(x, y, z); m.rotation.set(rx, 0, rz); g.add(m); return m; };
       add(geoCyl, woodMat, 0.055, 2 * h + r * 3.4, 0.055, 0, -0.3, 0);
-      add(dummyBodyGeo, strawMat, r * 0.95, 2 * h + r * 0.4, r * 0.95, 0, 0, 0);
+      const straw = toon(0xfff0c8, { map: strawTex, emissive: new THREE.Color(0) });
+      add(dummyBodyGeo, straw, r * 0.95, 2 * h + r * 0.4, r * 0.95, 0, 0, 0);
       for (const y of [-h * 0.75, 0, h * 0.75]) add(geoTorus, ropeMat, r * 0.98, r * 0.98, r * 0.5, 0, y, 0, Math.PI / 2);
-      add(new THREE.SphereGeometry(1, 14, 10), strawMat, r * 0.72, r * 0.8, r * 0.72, 0, h + r * 1.05, 0);
+      add(new THREE.SphereGeometry(1, 14, 10), straw, r * 0.72, r * 0.8, r * 0.72, 0, h + r * 1.05, 0);
       add(geoCyl, woodMat, 0.035, r * 3.4, 0.035, 0, h * 0.55, 0, 0, Math.PI / 2);
+      g.userData.straw = straw;
+      g.userData.base = new THREE.Color(0xfff0c8);
       return g;
     }
     if (prop === PROP.BRAZIER) {
@@ -1219,14 +1309,17 @@ function start() {
       gl_Position = projectionMatrix * mvPosition;
     }`;
   // Toon fire: bold bands (pale yellow core, orange, red rim) on a noise-eroded tongue that scrolls upward.
-  const FLAME_FRAGMENT = GLSL_NOISE + `
+  const FLAME_FRAGMENT = `
     uniform float uTime;
+    uniform sampler2D uNoise;
     varying vec2 vUv;
     varying vec4 vData;
     void main() {
       vec2 p = vUv * 2.0 - 1.0;
       float age = vData.w, heat = vData.y, seed = vData.z;
-      float n = fbm(vec3(vUv * vec2(2.1, 2.4) + vec2(seed * 7.0, -uTime * 4.2 - seed * 3.0), uTime * 1.4 + seed * 5.0));
+      // Two layers of tiling noise scrolling upward at different speeds (cheap: two texture reads, no 3D noise).
+      float n = (texture2D(uNoise, vUv * vec2(0.42, 0.5) + vec2(seed * 3.7, -uTime * 0.95 - seed)).r * 0.65
+        + texture2D(uNoise, vUv * vec2(0.9, 1.05) + vec2(seed * 1.3 + uTime * 0.11, -uTime * 2.1)).g * 0.35 - 0.5) * 1.6;
       vec2 q = vec2(p.x * (1.0 + 1.25 * max(p.y, 0.0)), p.y * 0.82 + 0.18);
       float shape = length(q) + n * 0.55 * (0.4 + 0.6 * (p.y * 0.5 + 0.5)) + age * 0.35;
       float edge = 1.0 - smoothstep(0.78, 0.84, shape);
@@ -1236,7 +1329,8 @@ function start() {
       col = mix(col, vec3(1.0, 0.42, 0.04), smoothstep(0.18, 0.22, t));
       col = mix(col, vec3(1.0, 0.72, 0.12), smoothstep(0.38, 0.42, t));
       col = mix(col, vec3(1.0, 0.95, 0.62), smoothstep(0.6, 0.64, t));
-      gl_FragColor = vec4(col * 1.6, edge * (1.0 - age * age));
+      // Fades in over the first few frames instead of popping, fades out as it rises.
+      gl_FragColor = vec4(col * 1.6, edge * (1.0 - age * age) * smoothstep(0.0, 0.1, age));
       #include <tonemapping_fragment>
       #include <encodings_fragment>
     }`;
@@ -1251,8 +1345,9 @@ function start() {
       #include <tonemapping_fragment>
       #include <encodings_fragment>
     }`;
-  const PUFF_FRAGMENT = GLSL_NOISE + `
+  const PUFF_FRAGMENT = `
     uniform float uTime;
+    uniform sampler2D uNoise;
     uniform vec3 uColorYoung;
     uniform vec3 uColorOld;
     uniform vec3 uSunDir;
@@ -1261,7 +1356,8 @@ function start() {
     void main() {
       vec2 p = vUv * 2.0 - 1.0;
       float age = vData.w, seed = vData.z;
-      float n = fbm(vec3(vUv * 2.1 + seed * 9.0, uTime * 0.22 + seed * 3.0));
+      float n = (texture2D(uNoise, vUv * 0.45 + vec2(seed * 5.1, seed * 2.3 - uTime * 0.05)).b * 0.7
+        + texture2D(uNoise, vUv * 0.9 + vec2(seed * 1.7 + uTime * 0.03, seed * 4.1)).a * 0.3 - 0.5) * 1.5;
       float d = length(p) + n * 0.45;
       float body = 1.0 - smoothstep(0.62, 0.72, d);
       float a = body * vData.y * sin(3.1416 * clamp(age * 1.05, 0.0, 1.0));
@@ -1271,6 +1367,14 @@ function start() {
       #include <tonemapping_fragment>
       #include <encodings_fragment>
     }`;
+  // Tiling noise for the fire and smoke sprites: four independent octave fields, one per channel.
+  const fireNoise = canvasTexture(128, (d, n) => {
+    const fields = [octaves(n, [4, 8, 16], [0.5, 0.3, 0.2], 81), octaves(n, [8, 16, 32], [0.5, 0.3, 0.2], 91),
+      octaves(n, [4, 8, 16], [0.55, 0.3, 0.15], 101), octaves(n, [8, 16], [0.6, 0.4], 111)];
+    for (let i = 0; i < n * n; i++) for (let c = 0; c < 4; c++) d[i * 4 + c] = Math.max(0, Math.min(255, fields[c][i] * 255));
+  });
+  fireNoise.anisotropy = 1;
+  uCloudNoise.value = fireNoise;
   function spriteSystem(max, fragment, blending, uniforms) {
     const quad = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
@@ -1315,7 +1419,9 @@ function start() {
           const age = 1 - L[i] / ML[i];
           ip[n * 3] = P[i * 3]; ip[n * 3 + 1] = P[i * 3 + 1]; ip[n * 3 + 2] = P[i * 3 + 2];
           iv[n * 3] = V[i * 3]; iv[n * 3 + 1] = V[i * 3 + 1]; iv[n * 3 + 2] = V[i * 3 + 2];
-          id[n * 4] = S0[i] + (S1[i] - S0[i]) * age; id[n * 4 + 1] = H[i]; id[n * 4 + 2] = SEED[i]; id[n * 4 + 3] = age;
+          // Long-lived particles grow in from 60% over their first fifth instead of appearing at full size.
+          const grow = ML[i] > 0.15 && age < 0.2 ? 0.6 + 2 * age : 1;
+          id[n * 4] = (S0[i] + (S1[i] - S0[i]) * age) * grow; id[n * 4 + 1] = H[i]; id[n * 4 + 2] = SEED[i]; id[n * 4 + 3] = age;
           is[n * 2] = SH[i * 2]; is[n * 2 + 1] = SH[i * 2 + 1];
           n++;
         }
@@ -1325,11 +1431,12 @@ function start() {
     };
   }
   const FLAME_SHAPE = [0.25, 1.55], CORE_SHAPE = [0.0, 1.0], EMBER_SHAPE = [0.9, 1.0];
-  const flames = spriteSystem(900, FLAME_FRAGMENT, THREE.NormalBlending);
-  const glows = spriteSystem(120, GLOW_FRAGMENT, THREE.AdditiveBlending);
-  const sparks = spriteSystem(400, FLAME_FRAGMENT, THREE.AdditiveBlending);
-  const smoke = spriteSystem(260, PUFF_FRAGMENT, THREE.NormalBlending, { uColorYoung: { value: lin(0x6a625a) }, uColorOld: { value: lin(0xb8b2aa) }, uSunDir });
-  const steamPuffs = spriteSystem(320, PUFF_FRAGMENT, THREE.NormalBlending, { uColorYoung: { value: lin(0xf6f9fb) }, uColorOld: { value: lin(0xe2eaee) }, uSunDir });
+  const uNoise = { value: fireNoise };
+  const flames = spriteSystem(1100, FLAME_FRAGMENT, THREE.NormalBlending, { uNoise });
+  const glows = spriteSystem(160, GLOW_FRAGMENT, THREE.AdditiveBlending);
+  const sparks = spriteSystem(500, FLAME_FRAGMENT, THREE.AdditiveBlending, { uNoise });
+  const smoke = spriteSystem(320, PUFF_FRAGMENT, THREE.NormalBlending, { uNoise, uColorYoung: { value: lin(0x6a625a) }, uColorOld: { value: lin(0xb8b2aa) }, uSunDir });
+  const steamPuffs = spriteSystem(320, PUFF_FRAGMENT, THREE.NormalBlending, { uNoise, uColorYoung: { value: lin(0xf6f9fb) }, uColorOld: { value: lin(0xe2eaee) }, uSunDir });
   // Scorch marks where fire lands: dark discs that fade.
   const SCORCH = 40;
   const scorchMesh = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false }), SCORCH);
@@ -1682,8 +1789,8 @@ function start() {
   const propSpots = [];
   {
     const count = W.sb_pack_bodies();
-    const b = f64(W.sb_bodies(), count * 21);
-    for (let k = 0; k < count; k++) propSpots.push([b[k * 21 + 17], b[k * 21 + 18]]);
+    const b = f64(W.sb_bodies(), count * BODY_STRIDE);
+    for (let k = 0; k < count; k++) propSpots.push([b[k * BODY_STRIDE + 17], b[k * BODY_STRIDE + 18]]);
   }
   const clearOfProps = (x, y, d) => propSpots.every(([px, py]) => Math.hypot(x - px, y - py) >= d);
   function seat(object, x, y, lift, sink) {
@@ -1740,40 +1847,66 @@ function start() {
     tex.anisotropy = maxAniso;
     return tex;
   }
-  const bannerGeo = new THREE.PlaneGeometry(0.95, 2.3, 4, 12).translate(0, -1.15, 0);
+  const bannerGeo = new THREE.PlaneGeometry(0.95, 2.3, 6, 16).translate(0, -1.15, 0);
+  const emblemTextures = {};
+  // The banner's cloth flaps in the wind (harder when bent air blows past), and burns away from the bottom edge up:
+  // a ragged line of glowing embers eats upward, with charred cloth just above it.
   function bannerMaterial(element) {
-    const m = new THREE.MeshStandardMaterial({ map: emblemTexture(element), side: THREE.DoubleSide, roughness: 0.92 });
+    emblemTextures[element] = emblemTextures[element] || emblemTexture(element);
+    const m = new THREE.MeshStandardMaterial({ map: emblemTextures[element], side: THREE.DoubleSide, roughness: 0.92 });
+    m.userData.burn = { value: 0 };
+    m.userData.glow = { value: 0 };
+    m.userData.gust = { value: 0 };
     m.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = uTime;
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;')
+      sh.uniforms.uBurn = m.userData.burn;
+      sh.uniforms.uGlow = m.userData.glow;
+      sh.uniforms.uGust = m.userData.gust;
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uGust;')
         .replace('#include <begin_vertex>', `#include <begin_vertex>
           float hang = clamp(-position.y / 2.3, 0.0, 1.0);
-          transformed.z += sin(uTime * 2.1 + position.y * 2.4 + position.x * 1.5 + instanceSeed()) * 0.11 * hang;`)
+          float wave = sin(uTime * (2.1 + uGust * 6.0) + position.y * 2.4 + position.x * 1.5 + instanceSeed());
+          transformed.z += wave * (0.11 + uGust * 0.35) * hang;
+          transformed.x += sin(uTime * 1.3 + position.y * 1.7 + instanceSeed()) * 0.04 * hang * (1.0 + uGust * 3.0);`)
         .replace('#include <common>', '#include <common>\nfloat instanceSeed() { return modelMatrix[3].x * 0.7 + modelMatrix[3].z * 0.3; }');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+          uniform float uBurn;
+          uniform float uGlow;
+          uniform float uTime;
+          float bh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float bnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+            return mix(mix(bh(i), bh(i + vec2(1.0, 0.0)), f.x), mix(bh(i + vec2(0.0, 1.0)), bh(i + vec2(1.0, 1.0)), f.x), f.y); }`)
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          float ragged = (bnoise(vUv * vec2(9.0, 5.0)) - 0.5) * 0.16 + (bnoise(vUv * vec2(31.0, 13.0)) - 0.5) * 0.06;
+          float above = vUv.y - (uBurn * 1.04 + ragged);
+          if (uBurn > 0.001 && above < 0.0) discard;
+          float charred = uBurn > 0.001 ? 1.0 - smoothstep(0.0, 0.14, above) : 0.0;
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.06, 0.045, 0.035), charred * 0.92);
+          float emberEdge = uGlow * (1.0 - smoothstep(0.0, 0.035, above)) * (0.75 + 0.25 * sin(uTime * 17.0 + vUv.x * 40.0));`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          totalEmissiveRadiance += vec3(1.0, 0.42, 0.08) * emberEdge * 4.0;`);
     };
     return m;
   }
-  const bannerMats = { 2: bannerMaterial(2), 1: bannerMaterial(1), 3: bannerMaterial(3), 4: bannerMaterial(4) };
   const poleGeo = new THREE.CylinderGeometry(0.055, 0.07, 4.4, 8).translate(0, 2.2, 0);
   const barGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.15, 6).rotateZ(Math.PI / 2);
   const knobGeo = new THREE.SphereGeometry(0.08, 10, 8);
-  [2, 1, 3, 4, 2, 1, 3, 4].forEach((element, k) => {
-    const a = Math.PI / 8 + (k / 8) * Math.PI * 2;
-    const x = Math.cos(a) * (ARENA_R + 200), y = Math.sin(a) * (ARENA_R + 200);
-    if (pondAt(x, y, 1.4) >= 0 || !clearOfProps(x, y, 260)) return;
+  // Banners stand round the ring, facing its centre (built from the simulation's bodies: they burn).
+  function makeBanner(element) {
     const g = new THREE.Group();
-    g.add(new THREE.Mesh(poleGeo, woodMat));
-    const bar = new THREE.Mesh(barGeo, woodMat); bar.position.y = 4.1; g.add(bar);
+    const pole = new THREE.Mesh(poleGeo, woodMat.clone()); g.add(pole);
+    const bar = new THREE.Mesh(barGeo, pole.material); bar.position.y = 4.1; g.add(bar);
     const knob = new THREE.Mesh(knobGeo, bronzeMat); knob.position.y = 4.45; g.add(knob);
-    const banner = new THREE.Mesh(bannerGeo, bannerMats[element]); banner.position.set(0, 4.05, 0.04); g.add(banner);
-    g.rotation.y = -a - Math.PI / 2;   // banner faces the centre of the ring
-    seat(shade(g), x, y, 0, 0.1);
-  });
+    const cloth = new THREE.Mesh(bannerGeo, bannerMaterial(element)); cloth.position.set(0, 4.05, 0.04); g.add(cloth);
+    g.userData.cloth = cloth;
+    g.userData.pole = pole;
+    return shade(g);
+  }
 
-  // Stone lanterns flanking the four entrances.
+  // Stone lanterns flanking the four entrances (bodies in the simulation: fire lights them, water puts them out).
   const lanternStone = pedestalMat;
-  const lanternGlow = new THREE.MeshStandardMaterial({ color: lin(0x2a1a0c), emissive: lin(0xffb15a), emissiveIntensity: 2.2, roughness: 0.6 });
   function lantern() {
+    const lanternGlow = new THREE.MeshStandardMaterial({ color: lin(0xe8d8b8), emissive: lin(0xffb15a), emissiveIntensity: 0, roughness: 0.6 });
     const g = new THREE.Group();
     const add = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.position.y = y; g.add(m); return m; };
     add(roundedBox(0.5, 0.16, 0.5, 0.04, 2), lanternStone, 0.08);
@@ -1783,12 +1916,8 @@ function start() {
     for (const [dx, dz] of [[-0.17, -0.17], [0.17, -0.17], [-0.17, 0.17], [0.17, 0.17]]) { const p = add(new THREE.BoxGeometry(0.06, 0.3, 0.06), lanternStone, 1.05); p.position.x = dx; p.position.z = dz; }
     const roof = add(new THREE.ConeGeometry(0.4, 0.26, 4), lanternStone, 1.33); roof.rotation.y = Math.PI / 4;
     add(new THREE.SphereGeometry(0.06, 8, 6), lanternStone, 1.5);
+    g.userData.glow = lanternGlow;
     return shade(g);
-  }
-  for (const e of ENTRANCES) for (const side of [-1, 1]) {
-    const a = e + side * 0.13, x = Math.cos(a) * (ARENA_R + 60), y = Math.sin(a) * (ARENA_R + 60);
-    if (pondAt(x, y, 1.3) >= 0 || !clearOfProps(x, y, 160)) continue;
-    seat(lantern(), x, y, 0, 0.03);
   }
 
   // Trees beyond the ring: conifers and broadleaves, kept off the props, ponds and the dummies' lane.
@@ -2350,6 +2479,7 @@ function start() {
     wadeRipples(dt);
     updateTornadoVisual(dt);
     updateQuake(dt);
+    updateDebris(dt);
     stepFloats(dt);
     updateHud();
     stepLog();
@@ -2671,23 +2801,126 @@ function start() {
     neck.rotation.z = spring('nod', casting ? 0.08 : 0.0, 10, dt) + breathe;
   }
 
+  // Burning props draw their own fire along their shape; the matching flame volumes are skipped in updateVolumes.
+  const propFireSpots = [];
+  const barrelSources = [];
+  function propFire(x, y, z, w, d, rate, size, heat, dt) {
+    const n = Math.min(8, rate * dt * 60);
+    const whole = Math.floor(n) + (Math.random() < n % 1 ? 1 : 0);
+    for (let i = 0; i < whole; i++) {
+      flames.spawn(x + rnd() * w, y + Math.random() * 0.1, z + rnd() * d, rnd() * 0.4, 1.0 + Math.random() * 1.3, rnd() * 0.4,
+        size * (0.6 + Math.random() * 0.5), size * 0.12, heat * (0.8 + Math.random() * 0.3), 0.5 + Math.random() * 0.35, 2.2, 1.1, FLAME_SHAPE);
+    }
+    if (Math.random() < 0.25 * rate * dt * 60 / 4) sparks.spawn(x + rnd() * w, y + 0.2, z + rnd() * d, rnd() * 1.2, 1.5 + Math.random() * 2.5, rnd() * 1.2, 0.045, 0.012, 1.0, 1.0 + Math.random(), 0.7, 0.7, EMBER_SHAPE, 3);
+    if (Math.random() < 0.06 * rate * dt * 60) smoke.spawn(x + rnd() * w * 0.5, y + size * 1.6, z + rnd() * d * 0.5, rnd() * 0.3, 0.7 + Math.random() * 0.5, rnd() * 0.3, size * 0.5, size * 2.6, 0.34, 2.2 + Math.random(), 0.12, 0.35);
+  }
+  function smoulder(x, y, z, amount, dt) {
+    if (Math.random() < amount * dt * 4) smoke.spawn(x + rnd() * 0.2, y, z + rnd() * 0.2, rnd() * 0.2, 0.4 + Math.random() * 0.3, rnd() * 0.2, 0.08, 0.6, 0.22, 1.6 + Math.random(), 0.1, 0.3);
+  }
+  const yawToThree = (yaw) => Math.atan2(Math.cos(yaw), -Math.sin(yaw));
+  let lastBodiesT = 0;
   function updateBodies(t) {
+    const dt = Math.min(0.05, Math.max(0, t - lastBodiesT));
+    lastBodiesT = t;
     const count = W.sb_pack_bodies();
-    const b = f64(W.sb_bodies(), count * 21);
+    const b = f64(W.sb_bodies(), count * BODY_STRIDE);
     const seen = new Set();
+    propFireSpots.length = 0;
+    barrelSources.length = 0;
     for (let k = 0; k < count; k++) {
-      const o = k * 21;
+      const o = k * BODY_STRIDE;
       const kind = b[o], prop = b[o + 1], slot = b[o + 20];
+      const burnState = b[o + 21], burnt = b[o + 22], heat = b[o + 23], yaw = b[o + 26], variant = b[o + 27];
+      const burning = burnState === 1;
       const key = slot * 4 + kind;
       seen.add(key);
       let entry = bodyMeshes.get(key);
       if (!entry || entry.prop !== prop || entry.kind !== kind) {
         if (entry) scene.remove(entry.mesh);
-        entry = { mesh: makeBody(kind, prop, b[o + 9], b[o + 10], slot), prop, kind };
+        entry = { mesh: makeBody(kind, prop, b[o + 9], b[o + 10], slot, variant), prop, kind };
         scene.add(entry.mesh);
         bodyMeshes.set(key, entry);
       }
       const m = entry.mesh;
+      entry.x = b[o + 2]; entry.y = b[o + 3]; entry.z = b[o + 4];
+      if (kind === 0 && prop === PROP.BANNER) {
+        toThree(b[o + 17], b[o + 18], b[o + 19], m.position);
+        m.rotation.y = yawToThree(yaw);
+        const mat = m.userData.cloth.material;
+        mat.userData.burn.value = burnt;
+        mat.userData.glow.value = burning ? 1 : 0;
+        charMaterial(m.userData.pole.material, WHITE, burnState === 2 ? 0.7 : burnt * 0.5, false, 0, t, slot);
+        // Bent air rushing past makes it flap hard.
+        let gust = 0;
+        for (const a of airSpots) gust = Math.max(gust, 1 - Math.hypot(a.x - m.position.x, a.z - m.position.z) / 4);
+        mat.userData.gust.value += (gust - mat.userData.gust.value) * Math.min(1, dt * 5);
+        if (burning) {
+          // Fire along the burning edge of the cloth.
+          const edge = 1.75 + 2.3 * Math.min(burnt, 0.92);
+          tmpV.set(0.04 * Math.sin(m.rotation.y), edge, 0.04 * Math.cos(m.rotation.y)).add(m.position);
+          const along = tmpV2.set(Math.cos(m.rotation.y), 0, -Math.sin(m.rotation.y));
+          for (let i = 0; i < 3; i++) {
+            const f = rnd() * 0.9;
+            propFire(tmpV.x + along.x * f, tmpV.y - 0.05, tmpV.z + along.z * f, 0.05, 0.05, 1.3, 0.32, 1.0, dt);
+          }
+          if (Math.random() < dt * 8) sparks.spawn(tmpV.x + along.x * rnd(), tmpV.y, tmpV.z + along.z * rnd(), rnd() * 0.6, -0.4 - Math.random(), rnd() * 0.6, 0.06, 0.02, 0.8, 1.2, -6, 0.5, EMBER_SHAPE, 2);
+          toThree(b[o + 17], b[o + 18], b[o + 19] + 175 + 230 * Math.min(burnt, 0.92) + 25, tmpV3);
+          propFireSpots.push(tmpV3.clone());
+        } else if (heat > 0.2) smoulder(m.position.x, m.position.y + 1.8, m.position.z, heat, dt);
+        continue;
+      }
+      if (kind === 0 && prop === PROP.LANTERN) {
+        toThree(b[o + 17], b[o + 18], b[o + 19], m.position);
+        m.rotation.y = yawToThree(yaw);
+        const glow = m.userData.glow;
+        glow.emissiveIntensity = burning ? 2.4 + 0.5 * Math.sin(t * 11 + slot) * Math.sin(t * 6.1 + slot * 2) : 0;
+        glow.color.set(burning ? 0x3a2410 : 0xe8d8b8);
+        if (burning) {
+          if (Math.random() < dt * 30) flames.spawn(m.position.x + rnd() * 0.04, m.position.y + 1.0, m.position.z + rnd() * 0.04, 0, 0.5, 0, 0.09, 0.02, 1.0, 0.3, 0.5, 0.5, FLAME_SHAPE);
+          if (Math.random() < dt * 20) glows.spawn(m.position.x, m.position.y + 1.05, m.position.z, 0, 0, 0, 0.7, 0.7, 0.35, 0.08, 0, 0);
+          toThree(b[o + 17], b[o + 18], b[o + 19] + 160, tmpV3);
+          propFireSpots.push(tmpV3.clone());
+        }
+        continue;
+      }
+      if (kind === 0 && prop === PROP.STRAW) {
+        toThree(b[o + 17], b[o + 18], b[o + 19], m.position);
+        m.rotation.y = yawToThree(yaw);
+        const bale = m.userData.bale, ash = m.userData.ash;
+        bale.visible = burnState !== 2;
+        ash.visible = burnState === 2 || burnt > 0.7;
+        bale.scale.set(1 - burnt * 0.35, Math.max(0.25, 1 - burnt * 0.8), 1 - burnt * 0.35);
+        bale.position.y = 0.275 * bale.scale.y;
+        charMaterial(bale.material, m.userData.base, burnt, burning, heat, t, slot);
+        ash.material.emissive.setRGB(1, 0.3, 0.05).multiplyScalar(burnState === 2 ? 0.25 + 0.15 * Math.sin(t * 3 + slot) : 0);
+        if (burning) {
+          propFire(m.position.x, m.position.y + 0.55 * bale.scale.y, m.position.z, 0.8, 0.45, 4.5, 0.62, 1.0, dt);
+          toThree(b[o + 17], b[o + 18], b[o + 19] + 60, tmpV3);
+          propFireSpots.push(tmpV3.clone());
+        } else if (burnState === 2) smoulder(m.position.x, m.position.y + 0.1, m.position.z, 0.5, dt);
+        else if (heat > 0.2) smoulder(m.position.x, m.position.y + 0.5, m.position.z, heat, dt);
+        continue;
+      }
+      if (kind === 0 && prop === PROP.BARREL) {
+        toThree(b[o + 2], b[o + 3], b[o + 4] - b[o + 9] - b[o + 10], m.position);
+        const water = b[o + 25];
+        m.userData.water.visible = water > 0.5;
+        m.userData.water.position.y = 0.1 + 0.76 * Math.min(1, water / 60);
+        if (water >= 20) barrelSources.push({ x: b[o + 2], y: b[o + 3], z: b[o + 4] + 36 });
+        continue;
+      }
+      if (kind === 0 && prop === PROP.CRATE) {
+        toThree(b[o + 2], b[o + 3], b[o + 4], m.position);
+        tmpQ.set(b[o + 5], b[o + 7], -b[o + 6], b[o + 8]);
+        m.quaternion.setFromAxisAngle(UP, yawToThree(yaw)).premultiply(tmpQ);
+        charMaterial(m.material, m.userData.base, burnt, burning, heat, t, slot);
+        if (burning) {
+          propFire(m.position.x, m.position.y + 0.2, m.position.z, 0.4, 0.4, 2.4, 0.42, 1.0, dt);
+          toThree(b[o + 2], b[o + 3], b[o + 4] + 14, tmpV3);
+          propFireSpots.push(tmpV3.clone());
+        } else if (heat > 0.2) smoulder(m.position.x, m.position.y + 0.3, m.position.z, heat, dt);
+        continue;
+      }
       if (kind === 0 && prop === PROP.BRAZIER) {
         toThree(b[o + 17], b[o + 18], b[o + 19], m.position);
         const lit = b[o + 16] > 0;
@@ -2698,6 +2931,12 @@ function start() {
       if (kind === 0 && prop === PROP.DUMMY) {
         // Tilt about the kernel's X and Y axes; kernel Y is three.js -Z.
         m.rotation.set(b[o + 14], 0, -b[o + 15]);
+        charMaterial(m.userData.straw, m.userData.base, burnt, burning, heat, t, slot);
+        if (burning) {
+          propFire(m.position.x, m.position.y - 0.1, m.position.z, 0.35, 0.35, 2.6, 0.42, 1.0, dt);
+          propFireSpots.push(new THREE.Vector3(m.position.x, m.position.y + 0.44, m.position.z));
+        } else if (burnState === 2) smoulder(m.position.x, m.position.y + 0.6, m.position.z, 0.25, dt);
+        else if (heat > 0.2) smoulder(m.position.x, m.position.y + 0.4, m.position.z, heat, dt);
         continue;
       }
       if (kind === 0 && prop === PROP.ICE) { toThree(b[o + 17], b[o + 18], b[o + 19], m.position); m.position.y += m.userData.half - 0.03; continue; }
@@ -2721,6 +2960,7 @@ function start() {
     const v = f64(W.sb_volumes(), count * VSTRIDE);
     let na = 0, nw = 0, ni = 0;
     fireSpots.length = 0;
+    airSpots.length = 0;
     const rate = Math.min(dt * 60, 3);
     const liveSprays = new Set();
     for (let k = 0; k < count; k++) {
@@ -2729,7 +2969,10 @@ function start() {
       toThree(v[o + 2], v[o + 3], v[o + 4], tmpV);
       const vx = v[o + 8] / 100, vy = v[o + 10] / 100, vz = -v[o + 9] / 100;
       const speed = Math.hypot(vx, vy, vz);
-      if (sub === SUB.FIRE) {
+      if (sub === SUB.FIRE && owner === 1 && propFireSpots.some((q) => q.distanceToSquared(tmpV) < 0.3)) {
+        // A burning prop's flame: the prop draws its own fire along its shape; this one only lights the scene.
+        fireSpots.push({ p: tmpV.clone(), power: v[o + 7] * v[o + 6] });
+      } else if (sub === SUB.FIRE) {
         const temp = v[o + 6];
         const heat = Math.min(1, Math.max(0.2, (temp - 650) / 1400));
         const flicker = 0.85 + 0.15 * Math.sin(t * 23 + k) * Math.sin(t * 9.7 + k * 3);
@@ -2760,16 +3003,18 @@ function start() {
           liveFires.add(slot);
         }
         // Halo of light around every fire.
-        glows.spawn(tmpV.x, tmpV.y, tmpV.z, 0, 0, 0, r * 3.6 * flicker, r * 3.6 * flicker, 0.42 * heat, 0.034, 0, 0);
+        // Re-spawned every frame: each lives a little over two frames whatever the frame rate, so it never strobes.
+        const frameLife = Math.max(0.034, dt * 2.2);
+        glows.spawn(tmpV.x, tmpV.y, tmpV.z, 0, 0, 0, r * 3.6 * flicker, r * 3.6 * flicker, 0.42 * heat, frameLife, 0, 0);
         if (moving) {
           // A fireball: a white-hot swirling core and a trail of tongues laid along its path since last frame.
-          flames.spawn(tmpV.x, tmpV.y, tmpV.z, vx * 0.2, vy * 0.2, vz * 0.2, r * 0.95 * flicker, r * 0.85, 1.0, 0.05, 0, 0, CORE_SHAPE);
+          flames.spawn(tmpV.x, tmpV.y, tmpV.z, vx * 0.2, vy * 0.2, vz * 0.2, r * 0.95 * flicker, r * 0.85, 1.0, Math.max(0.05, frameLife), 0, 0, CORE_SHAPE);
           const n = Math.min(10, (3 + r * 6) * rate);
           for (let i = 0; i < n; i++) {
             const f = Math.random();
             flames.spawn(fromX + (tmpV.x - fromX) * f + rnd() * r * 0.7, fromY + (tmpV.y - fromY) * f + rnd() * r * 0.7, fromZ + (tmpV.z - fromZ) * f + rnd() * r * 0.7,
               vx * 0.45 + rnd(), vy * 0.45 + 0.6 + Math.random(), vz * 0.45 + rnd(),
-              r * (0.55 + Math.random() * 0.4), r * 0.1, heat * (0.75 + Math.random() * 0.3), 0.22 + Math.random() * 0.22, 2.6, 2.5, FLAME_SHAPE);
+              r * (0.55 + Math.random() * 0.4), r * 0.18, heat * (0.75 + Math.random() * 0.3), 0.3 + Math.random() * 0.25, 2.6, 2.5, FLAME_SHAPE);
           }
         } else {
           // A standing fire: tongues licking up from its base.
@@ -2778,7 +3023,7 @@ function start() {
           for (let i = 0; i < whole; i++) {
             flames.spawn(tmpV.x + rnd() * r * 0.9, tmpV.y - r * 0.35 + rnd() * r * 0.3, tmpV.z + rnd() * r * 0.9,
               rnd() * 0.5, 1.1 + Math.random() * 1.2, rnd() * 0.5,
-              r * (0.55 + Math.random() * 0.45), r * 0.1, heat * (0.8 + Math.random() * 0.3), 0.45 + Math.random() * 0.3, 2.2, 1.2, FLAME_SHAPE);
+              r * (0.55 + Math.random() * 0.45), r * 0.2, heat * (0.8 + Math.random() * 0.3), 0.55 + Math.random() * 0.35, 2.2, 1.2, FLAME_SHAPE);
           }
           if (Math.random() < 0.3 * rate) {
             smoke.spawn(tmpV.x + rnd() * r * 0.4, tmpV.y + r * 1.4, tmpV.z + rnd() * r * 0.4, rnd() * 0.3, 0.6 + Math.random() * 0.4, rnd() * 0.3, r * 0.45, r * 2.2, 0.32, 2 + Math.random(), 0.12, 0.35);
@@ -2794,6 +3039,7 @@ function start() {
           steamPuffs.spawn(tmpV.x + rnd() * r * 0.8, tmpV.y + rnd() * r * 0.5, tmpV.z + rnd() * r * 0.8, vx * 0.5 + rnd() * 0.2, vy * 0.5 + 0.3, vz * 0.5 + rnd() * 0.2, r * 0.9, r * 1.9, 0.5, 1.2 + Math.random() * 0.6, 0.1, 0.5);
         }
       } else if (sub === SUB.AIR && owner === 3) {
+        if (speed > 4) airSpots.push(tmpV.clone());
         const a = pooled(pools.air, na, () => new THREE.Mesh(geoIco1, airMat));
         const ring = pooled(pools.ring, na, () => new THREE.Mesh(geoTorus, ringMat));
         a.position.copy(tmpV); a.scale.setScalar(r);
@@ -2967,7 +3213,50 @@ function start() {
   }
 
   // A technique's moment (numbered from 100 by the sandbox).
-  function techniqueEffect(kind, x, y, z) {
+  // Debris: boards and staves from smashed crates and barrels, tumbling, bouncing and fading away.
+  const debrisPieces = [];
+  const plankGeo = new THREE.BoxGeometry(0.5, 0.025, 0.12);
+  const staveGeo = new THREE.BoxGeometry(0.1, 0.85, 0.025);
+  const debrisMats = { crate: toon(0xffffff, { map: crateTex }, 0.1), stave: toon(0xffffff, { map: staveTex }, 0.1), charred: toon(0x2a221c) };
+  function spawnDebris(geo, mat, x, y, z, count, speed) {
+    for (let i = 0; i < count; i++) {
+      let piece = debrisPieces.find((d) => d.life <= 0);
+      if (!piece) {
+        if (debrisPieces.length >= 90) break;
+        piece = { mesh: new THREE.Mesh(geo, mat), v: new THREE.Vector3(), spin: new THREE.Vector3(), life: 0 };
+        piece.mesh.castShadow = true;
+        scene.add(piece.mesh);
+        debrisPieces.push(piece);
+      }
+      piece.mesh.geometry = geo; piece.mesh.material = mat; piece.mesh.visible = true;
+      piece.mesh.position.set(x + rnd() * 0.3, y + Math.random() * 0.4, z + rnd() * 0.3);
+      piece.mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+      piece.mesh.scale.setScalar(0.7 + Math.random() * 0.5);
+      const a = Math.random() * Math.PI * 2, s = speed * (0.5 + Math.random() * 0.7);
+      piece.v.set(Math.cos(a) * s, 2.5 + Math.random() * 3.5, Math.sin(a) * s);
+      piece.spin.set(rnd() * 16, rnd() * 16, rnd() * 16);
+      piece.life = 2.6 + Math.random();
+    }
+  }
+  function updateDebris(dt) {
+    for (const d of debrisPieces) {
+      if (d.life <= 0) continue;
+      d.life -= dt;
+      d.v.y -= 9.8 * dt;
+      d.mesh.position.addScaledVector(d.v, dt);
+      d.mesh.rotation.x += d.spin.x * dt; d.mesh.rotation.y += d.spin.y * dt; d.mesh.rotation.z += d.spin.z * dt;
+      const ground = heightAt(d.mesh.position.x * 100, -d.mesh.position.z * 100) / 100 + 0.02;
+      if (d.mesh.position.y < ground) {
+        d.mesh.position.y = ground;
+        d.v.y = Math.abs(d.v.y) * 0.3; d.v.x *= 0.55; d.v.z *= 0.55; d.spin.multiplyScalar(0.5);
+      }
+      if (d.life < 0.6) d.mesh.scale.multiplyScalar(Math.exp(-dt * 5));
+      if (d.life <= 0) d.mesh.visible = false;
+    }
+  }
+
+  const PROP_NAMES = { [PROP.BANNER]: 'banner', [PROP.LANTERN]: 'lantern', [PROP.STRAW]: 'straw', [PROP.CRATE]: 'crate', [PROP.DUMMY]: 'dummy' };
+  function techniqueEffect(kind, x, y, z, detail, energy) {
     switch (kind) {
       case 1: // ice dagger shatters
         emit(x, y, z, 14, 0xe6f8ff, 3, 1.6, 6, 0.6);
@@ -2993,6 +3282,38 @@ function start() {
         kick(0.3);
         for (let i = 0; i < 16; i++) sparks.spawn(x + rnd() * 0.3, y + 0.2, z + rnd() * 0.3, rnd() * 5, Math.random() * 3, rnd() * 5, 0.05, 0.01, 1, 0.5, -2, 1.5, EMBER_SHAPE);
         break;
+      case 6: // a prop caught fire: a whoosh of flame and sparks
+        if (detail === PROP.LANTERN) { glows.spawn(x, y - 0.55, z, 0, 0, 0, 0.6, 1.4, 0.6, 0.3, 0, 0); floatLabel('Lit!', x, y - 0.1, z, 'lit'); break; }
+        glows.spawn(x, y, z, 0, 0, 0, 0.8, 2.6, 0.7, 0.3, 0, 0);
+        for (let i = 0; i < 14; i++) flames.spawn(x + rnd() * 0.5, y + rnd() * 0.3, z + rnd() * 0.5, rnd() * 2, 1.5 + Math.random() * 2, rnd() * 2, 0.3 + Math.random() * 0.3, 0.05, 1.0, 0.45 + Math.random() * 0.3, 1.5, 1.5, FLAME_SHAPE);
+        for (let i = 0; i < 16; i++) sparks.spawn(x, y, z, rnd() * 5, 1 + Math.random() * 4, rnd() * 5, 0.05, 0.015, 1, 0.6 + Math.random() * 0.4, -2, 1.5, EMBER_SHAPE);
+        floatLabel(detail === PROP.STRAW ? 'WHOOSH!' : 'Burning!', x, y + 0.8, z, 'ignite');
+        kick(0.12);
+        break;
+      case 7: // water put a burning prop out: a hiss of steam
+        for (let i = 0; i < 16; i++) steamPuffs.spawn(x + rnd() * 0.6, y + rnd() * 0.4, z + rnd() * 0.6, rnd() * 0.6, 0.8 + Math.random() * 0.8, rnd() * 0.6, 0.2, 1.1, 0.6, 1.4 + Math.random() * 0.8, 0.1, 0.5);
+        floatLabel(detail === PROP.LANTERN ? 'Out' : 'Doused!', x, y + 0.6, z, 'douse');
+        break;
+      case 8: // burnt away: a last flare, ash and embers
+        for (let i = 0; i < 12; i++) smoke.spawn(x + rnd() * 0.6, y + Math.random() * 0.5, z + rnd() * 0.6, rnd() * 0.5, 0.6 + Math.random() * 0.6, rnd() * 0.5, 0.3, 1.6, 0.4, 2 + Math.random(), 0.1, 0.4);
+        for (let i = 0; i < 20; i++) sparks.spawn(x, y, z, rnd() * 3, Math.random() * 3, rnd() * 3, 0.05, 0.015, 1, 0.8 + Math.random() * 0.6, 1, 1, EMBER_SHAPE, 2);
+        if (detail === PROP.CRATE) spawnDebris(plankGeo, debrisMats.charred, x, y - 0.45, z, 8, 1.2);
+        break;
+      case 9: { // smashed: boards fly; a barrel bursts in a sheet of water
+        const ground = heightAt(x * 100, -z * 100) / 100;
+        if (detail === PROP.BARREL) {
+          spawnDebris(staveGeo, debrisMats.stave, x, ground + 0.3, z, 10, 2.6);
+          splash(x, ground + 0.4, z, 90, 3.6, 0.014, true);
+          splashRing(x, ground, z, 1.1);
+          floatLabel(`SPLASH! ${energy.toFixed(0)} kg of water`, x, ground + 1.4, z, 'smash');
+        } else {
+          spawnDebris(plankGeo, debrisMats.crate, x, ground + 0.15, z, 12, 3.2);
+          for (let i = 0; i < 18; i++) emit(x, ground + 0.3, z, 1, 0xb08a5c, 2.2, 2.2, 7, 0.9);
+          floatLabel('SMASH!', x, ground + 1.0, z, 'smash');
+        }
+        kick(0.35);
+        break;
+      }
       default:
         break;
     }
@@ -3004,7 +3325,7 @@ function start() {
     for (let k = 0; k < n; k++) {
       const o = k * 7, type = e[o], mass = e[o + 4];
       const x = e[o + 1] / 100, y = e[o + 3] / 100, z = -e[o + 2] / 100;
-      if (type >= 100) { techniqueEffect(type - 100, x, y, z); continue; }
+      if (type >= 100) { techniqueEffect(type - 100, x, y, z, e[o + 4], e[o + 5]); continue; }
       switch (REACTION[type]) {
         case 'Saturation': {
           const kx = e[o + 1], ky = e[o + 2], pond = pondAt(kx, ky, 1.05);
@@ -3075,7 +3396,10 @@ function start() {
     const looking = element === 2 && !(player[36] > 0);
     const water = nearestWater();
     const inReach = water.distance <= DRAW_RANGE_CM;
-    if (looking) lines.push(inReach ? `<span class="on">Water in reach (${(water.distance / 100).toFixed(0)} m): left-click to draw</span>` : `<span class="warn">No water in reach: nearest pond ${(water.distance / 100).toFixed(0)} m away (15 m needed)</span>`);
+    const barrelInReach = water.barrel <= BARREL_RANGE_CM;
+    if (looking) lines.push(inReach ? `<span class="on">Water in reach (${(water.distance / 100).toFixed(0)} m): left-click to draw</span>`
+      : barrelInReach ? `<span class="on">Water barrel in reach: left-click to draw</span>`
+      : `<span class="warn">No water in reach: nearest pond ${(water.distance / 100).toFixed(0)} m away (15 m needed), or a water barrel</span>`);
     shoreRings.forEach((ring, i) => { ring.material.opacity = looking && inReach && i === water.pond ? 0.18 + 0.12 * Math.sin(uTime.value * 4) : 0; });
     if (player[17] < 0.95) lines.push(`<span class="warn">Mud underfoot: traction ${player[17].toFixed(2)}</span>`);
     lines.push(`Work done: ${(player[28] / 1000).toFixed(0)} kJ motion · ${(player[27] / 1e6).toFixed(1)} MJ heat`);

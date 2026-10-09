@@ -74,6 +74,15 @@ namespace BendingSandbox3D
 		/** Brazier: flame burning. */
 		bool bLit = true;
 		bool bAlive = false;
+		/** Banners, straw, crates, dummies, lanterns: heat soaked up, its fire, what is left to burn. */
+		FCombustible Burn;
+		/** Water it holds (barrels). */
+		double WaterKg = 0.0;
+		/** Facing (rad) and variant from the layout (a banner's element). */
+		double YawRad = 0.0;
+		int Variant = 0;
+		/** Hit hard enough to smash this frame. */
+		bool bBreakPending = false;
 	};
 
 	enum class EProjectileKind : unsigned char
@@ -167,7 +176,15 @@ namespace BendingSandbox3D
 		Quake,
 		FireRing,
 		FireJet,
-		TornadoEnd
+		TornadoEnd,
+		/** A prop caught fire (MassKg: its EArenaProp). */
+		Ignite,
+		/** Water put a burning prop out (MassKg: its EArenaProp). */
+		Douse,
+		/** A prop burnt away (MassKg: its EArenaProp). */
+		BurntOut,
+		/** A prop smashed (MassKg: its EArenaProp; EnergyJ: water it spilled, kg). */
+		Smash
 	};
 
 	/** Earthbending in progress (wall rising, rock lifting). */
@@ -297,6 +314,16 @@ namespace BendingSandbox3D
 		void AddEffect(ESandboxEffect Effect, const FVec3& LocationCm, double EnergyJ);
 		/** Pushes a body as if struck: J (kg*cm/s) through its simulated volume, so every kind of body reacts its own way. */
 		void PushBody(int Index, const FVec3& ImpulseKgCmS);
+		/** Props catching fire, burning, being put out, burning away. */
+		void UpdateCombustion(double Dt);
+		/** Smashes what was hit hard enough this frame. */
+		void ProcessBreaks();
+		void SmashBody(int Index);
+		/** Where a prop is heated and doused, and where its flame burns. */
+		void GetCombustionPoints(const FBody& Body, FVec3& OutCenterCm, FVec3& OutFlameCm) const;
+		void AddPropEffect(ESandboxEffect Effect, const FBody& Body, const FVec3& LocationCm, double EnergyJ);
+		/** A barrel within reach holding enough water for a whip, or -1. */
+		int FindWaterBarrel(const FVec3& FromCm, double MinWaterKg, FVec3& OutSourceCm) const;
 		/** Ground flame fed by the current hold. */
 		int HoldProjectile = -1;
 		/** Where Raise / Lower Ground works, fixed when the hold starts. */

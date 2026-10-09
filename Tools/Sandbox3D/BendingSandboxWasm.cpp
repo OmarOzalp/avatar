@@ -15,7 +15,7 @@ inline void* operator new(decltype(sizeof(0)), void* Where) noexcept { return Wh
 namespace
 {
 	constexpr int PlayerFields = 50;
-	constexpr int BodyStride = 21;
+	constexpr int BodyStride = 28;
 	constexpr int VolumeStride = 18;
 	constexpr int WhipStride = 6;
 	constexpr int PatchStride = 5;
@@ -173,6 +173,16 @@ SB_EXPORT(sb_pack_bodies) int SbPackBodies()
 		O[18] = B.AnchorCm.Y;
 		O[19] = B.AnchorCm.Z;
 		O[20] = Index;
+		// Burning props: 0 intact, 1 burning, 2 burnt away; how much is burnt; how close to catching; wetness.
+		const FArenaPropSpec& Spec = GetArenaPropSpec(B.Prop);
+		const bool bProp = B.Kind == EBodyKind::Prop;
+		O[21] = !bProp ? 0.0 : (B.Burn.bBurntOut ? 2.0 : (B.Burn.bBurning ? 1.0 : 0.0));
+		O[22] = bProp ? B.Burn.GetBurntFraction(Spec.Combustion) : 0.0;
+		O[23] = bProp ? B.Burn.GetHeatFraction(Spec.Combustion) : 0.0;
+		O[24] = B.Burn.WetS;
+		O[25] = B.WaterKg;
+		O[26] = B.YawRad;
+		O[27] = static_cast<double>(B.Variant);
 	}
 	return Count;
 }
