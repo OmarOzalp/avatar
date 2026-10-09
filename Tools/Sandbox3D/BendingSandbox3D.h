@@ -39,6 +39,8 @@ namespace BendingSandbox3D
 		bool bSprint = false;
 		/** Guard held (C): blocks the sparring partner's attacks, parries them in its first moments. */
 		bool bGuard = false;
+		/** Dodge (V): a roll the way you are moving (back from the camera with no move input). */
+		bool bDodge = false;
 		/** Held state of LMB, RMB, Q, E. */
 		bool bSlotHeld[static_cast<int>(ETechniqueSlot::Count)] = {};
 		/** 0 = no change, else an ETechniqueElement. */
@@ -192,6 +194,10 @@ namespace BendingSandbox3D
 		double DownS = 0.0;
 		double ProtectS = 0.0;
 		FVec3 FallDirection = FVec3(1.0, 0.0, 0.0);
+		/** Rolling: time left, the roll's velocity, and when the next roll is allowed. Flames pass through a roll. */
+		double DodgeS = 0.0;
+		double DodgeCooldownS = 0.0;
+		FVec3 DodgeVelocityCmS;
 	};
 
 	/** The sparring partner's states and attacks: its mind is the kernel's FSparringBrain, shared with Unreal. */
@@ -263,7 +269,9 @@ namespace BendingSandbox3D
 		/** The sparring partner began an attack (MassKg: its ERivalAttack). */
 		RivalWindUp,
 		/** The sparring partner guarded or dodged (MassKg: 1 guard, 2 dodge). */
-		RivalEvade
+		RivalEvade,
+		/** The player rolled out of the way. */
+		PlayerDodge
 	};
 
 	/** Earthbending in progress (wall rising, rock lifting). */
@@ -385,6 +393,7 @@ namespace BendingSandbox3D
 
 		bool PreviousSlotHeld[static_cast<int>(ETechniqueSlot::Count)] = {};
 		bool bPreviousJump = false;
+		bool bPreviousDodge = false;
 		/** This move created the whip (its active frame does not lash yet). */
 		bool bWhipCreatedThisMove = false;
 	public:
@@ -422,6 +431,11 @@ namespace BendingSandbox3D
 		static constexpr double BlockStamina = 10.0;
 		/** Damage from a flame striking a fighter: FlameStrikeDamage * (mass / 0.6 kg)^1.5. */
 		static constexpr double FlameStrikeDamage = 12.0;
+		/** A roll lasts this long, covers about DodgeSpeedCmS * DodgeSeconds, costs stamina, and flames pass through it. */
+		static constexpr double DodgeSeconds = 0.36;
+		static constexpr double DodgeSpeedCmS = 850.0;
+		static constexpr double DodgeStamina = 20.0;
+		static constexpr double DodgeCooldownSeconds = 0.55;
 		/** True while a duel is on (from the bow to a knockout). */
 		bool IsDuelActive() const;
 	private:

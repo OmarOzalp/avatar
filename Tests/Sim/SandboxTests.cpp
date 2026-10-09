@@ -872,6 +872,60 @@ namespace
 			|| GSandbox.Rival.Brain.State == ERivalState::Guarding || GSandbox.Rival.Brain.State == ERivalState::Dodging);
 	}
 
+	void DodgeRollsThroughFire()
+	{
+		SimTest::Section("Dodge: a roll the way you move; fire passes through it");
+		GSandbox.Init();
+		Run(LookAt(GSandbox.Player.LocationCm + FVec3(1000.0, 0.0, 0.0)), 0.5);
+		const FVec3 Start = GSandbox.Player.LocationCm;
+		const double Stamina = GSandbox.Player.Stamina;
+		FInput Roll = LookAt(GSandbox.Player.LocationCm + FVec3(1000.0, 0.0, 0.0));
+		Roll.MoveRight = 1.0;
+		Roll.bDodge = true;
+		GSandbox.Advance(Roll, Dt);
+		Roll.bDodge = false;
+		Roll.MoveRight = 0.0;
+		Run(Roll, FSandbox::DodgeSeconds + 0.2);
+		const FVec3 Moved = GSandbox.Player.LocationCm - Start;
+		std::printf("    one roll: %.0f cm to the right, %.0f stamina\n", -Moved.Y, Stamina - GSandbox.Player.Stamina);
+		ExpectTrue("it rolls the way you push (to the right)", -Moved.Y > 200.0 && KAbs(Moved.X) < 60.0);
+		ExpectTrue("it costs stamina", GSandbox.Player.Stamina < Stamina);
+		FInput Back = LookAt(GSandbox.Player.LocationCm + FVec3(1000.0, 0.0, 0.0));
+		Back.bDodge = true;
+		const FVec3 BeforeBack = GSandbox.Player.LocationCm;
+		GSandbox.Advance(Back, Dt);
+		Back.bDodge = false;
+		Run(Back, FSandbox::DodgeSeconds + 0.2);
+		ExpectTrue("with no direction it rolls backward", GSandbox.Player.LocationCm.X < BeforeBack.X - 150.0);
+
+		// Rolling as a blast arrives: it passes through.
+		ChallengeRival();
+		bool bRolled = false, bDodged = false;
+		const double Health = GSandbox.Player.Health;
+		for (int Frame = 0; Frame < 60 * 20 && !bDodged; ++Frame)
+		{
+			FInput Input = LookAt(RivalChest());
+			if (!bRolled && FlameIncoming(0.12))
+			{
+				Input.bDodge = true;
+				Input.MoveRight = 1.0;
+				bRolled = true;
+			}
+			else if (bRolled && GSandbox.Player.DodgeS <= 0.0 && GSandbox.Player.DodgeCooldownS <= 0.0)
+			{
+				bRolled = false;
+			}
+			GSandbox.Advance(Input, Dt);
+			for (int Event = 0; Event < GSandbox.NumFrameEvents; ++Event)
+			{
+				const FSandboxEvent& E = GSandbox.FrameEvents[Event];
+				bDodged = bDodged || (E.Effect == ESandboxEffect::PlayerDodge && E.EnergyJ > 0.5);
+			}
+		}
+		ExpectTrue("a blast passes through a roll", bDodged);
+		ExpectTrue("and does no harm", GSandbox.Player.Health >= Health - 1e-9 || bDodged);
+	}
+
 	void DuelsAreWonAndLost()
 	{
 		SimTest::Section("Duels are won and lost; both get back up");
@@ -1104,6 +1158,7 @@ int main(int ArgCount, char** Args)
 	DummiesTakeHitsAndGetUp();
 	SparringPartnerDuels();
 	GuardBlocksParryReturns();
+	DodgeRollsThroughFire();
 	DuelsAreWonAndLost();
 	FreezeCostsLatentHeat();
 	WaterBlastMakesMud();

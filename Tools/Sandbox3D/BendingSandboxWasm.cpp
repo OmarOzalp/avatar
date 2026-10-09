@@ -14,7 +14,7 @@ inline void* operator new(decltype(sizeof(0)), void* Where) noexcept { return Wh
 
 namespace
 {
-	constexpr int PlayerFields = 58;
+	constexpr int PlayerFields = 62;
 	constexpr int RivalFields = 28;
 	constexpr int BodyStride = 30;
 	constexpr int VolumeStride = 18;
@@ -57,7 +57,7 @@ namespace
 SB_EXPORT(sb_init) void SbInit() { Sandbox(); }
 SB_EXPORT(sb_reset) void SbReset() { Sandbox().Init(); }
 
-/** Buttons: bit 0 LMB, 1 RMB, 2 Q, 3 E, 4 jump, 5 sprint, 6 F, 7 guard. Stance: 0 = keep, else ETechniqueElement (1 Earth, 2 Water, 3 Fire, 4 Air). */
+/** Buttons: bit 0 LMB, 1 RMB, 2 Q, 3 E, 4 jump, 5 sprint, 6 F, 7 guard, 8 dodge. Stance: 0 = keep, else ETechniqueElement (1 Earth, 2 Water, 3 Fire, 4 Air). */
 SB_EXPORT(sb_set_input) void SbSetInput(double MoveForward, double MoveRight, double CamX, double CamY, double CamZ,
 	double DirX, double DirY, double DirZ, int Buttons, int Stance)
 {
@@ -73,6 +73,7 @@ SB_EXPORT(sb_set_input) void SbSetInput(double MoveForward, double MoveRight, do
 	GInput.bJump = (Buttons >> 4) & 1;
 	GInput.bSprint = (Buttons >> 5) & 1;
 	GInput.bGuard = (Buttons >> 7) & 1;
+	GInput.bDodge = (Buttons >> 8) & 1;
 	GInput.StanceRequest = Stance;
 }
 
@@ -147,6 +148,10 @@ SB_EXPORT(sb_player) double* SbPlayer()
 	O[55] = P.FallDirection.X;
 	O[56] = P.FallDirection.Y;
 	O[57] = P.ProtectS;
+	O[58] = P.DodgeS;
+	O[59] = P.DodgeVelocityCmS.X;
+	O[60] = P.DodgeVelocityCmS.Y;
+	O[61] = FSandbox::DodgeSeconds;
 	return GPlayer;
 }
 

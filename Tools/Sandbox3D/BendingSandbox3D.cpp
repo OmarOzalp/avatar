@@ -247,6 +247,7 @@ namespace BendingSandbox3D
 			bHeld = false;
 		}
 		bPreviousJump = false;
+		bPreviousDodge = false;
 		bWhipCreatedThisMove = false;
 		HoldProjectile = -1;
 		EarthWorkMovedKg = 0.0;
@@ -642,7 +643,7 @@ namespace BendingSandbox3D
 	void FSandbox::UpdateMoves(const FInput& Input, double Dt)
 	{
 		// Guarding or down, no new move starts (and none is buffered).
-		const bool bLocked = Player.bGuarding || Player.DownS > 0.0;
+		const bool bLocked = Player.bGuarding || Player.DownS > 0.0 || Player.DodgeS > 0.0;
 		for (int Slot = 0; Slot < static_cast<int>(ETechniqueSlot::Count); ++Slot)
 		{
 			const bool bPressed = Input.bSlotHeld[Slot] && !PreviousSlotHeld[Slot];
@@ -1430,7 +1431,12 @@ namespace BendingSandbox3D
 
 		FVec3 Horizontal = Flat(Player.VelocityCmS);
 		const FVec3 Target = Wish * MaxSpeed;
-		if (Player.DashTimeS > 0.0)
+		if (Player.DodgeS > 0.0)
+		{
+			// Rolling: carried at the roll's speed, easing off over its last third.
+			Horizontal = Player.DodgeVelocityCmS * KMin(1.0, 0.35 + Player.DodgeS / (DodgeSeconds * 0.5));
+		}
+		else if (Player.DashTimeS > 0.0)
 		{
 			// Fire jets hold the dash velocity, trailing flame from the feet.
 			Player.DashTimeS -= Dt;
@@ -2748,6 +2754,36 @@ namespace BendingSandbox3D
 		}
 		const bool bFree = Player.Phase == EPhase::None && Player.HoldTechnique == ETechnique::None && !Player.bScooter
 			&& Player.DashTimeS <= 0.0 && Player.Stamina > 0.0;
+
+		// A roll: the way the stick points (camera-relative), or back from the camera; flames pass through it.
+		const bool bDodgePressed = Input.bDodge && !bPreviousDodge;
+		bPreviousDodge = Input.bDodge;
+		Player.DodgeCooldownS = KMax(Player.DodgeCooldownS - Dt, 0.0);
+		if (Player.DodgeS > 0.0)
+		{
+			Player.DodgeS = KMax(Player.DodgeS - Dt, 0.0);
+		}
+		else if (bDodgePressed && bFree && Player.bGrounded && Player.DodgeCooldownS <= 0.0 && Player.Stamina >= DodgeStamina)
+		{
+			FVec3 CameraFlat = Flat(Input.CameraForward);
+			CameraFlat = CameraFlat.Size() > SmallNumber ? CameraFlat.GetSafeNormal() : GetFacing();
+			const FVec3 CameraRight(CameraFlat.Y, -CameraFlat.X, 0.0);
+			FVec3 Way = CameraFlat * Input.MoveForward + CameraRight * Input.MoveRight;
+			// No direction: a backstep, away from where the camera looks (from the opponent you are watching).
+			Way = Way.Size() > 0.1 ? Way.GetSafeNormal() : CameraFlat * -1.0;
+			Player.DodgeS = DodgeSeconds;
+			Player.DodgeCooldownS = DodgeCooldownSeconds;
+			Player.DodgeVelocityCmS = Way * DodgeSpeedCmS;
+			Player.Stamina -= DodgeStamina;
+			Player.ProtectS = KMax(Player.ProtectS, DodgeSeconds);
+			Player.bGuarding = false;
+			AddEffect(ESandboxEffect::PlayerDodge, Player.LocationCm, 0.0);
+		}
+		if (Player.DodgeS > 0.0)
+		{
+			Player.bGuarding = false;
+			return;
+		}
 		if (Input.bGuard && bFree && (Player.bGuarding || Player.GuardCooldownS <= 0.0))
 		{
 			Player.GuardTimeS = Player.bGuarding ? Player.GuardTimeS + Dt : 0.0;
@@ -2843,6 +2879,11 @@ namespace BendingSandbox3D
 			Projectile.bStruck = true;
 			if (Player.DownS > 0.0 || Player.ProtectS > 0.0)
 			{
+				// Rolled clean through it.
+				if (Player.DodgeS > 0.0)
+				{
+					AddEffect(ESandboxEffect::PlayerDodge, GetChestCm(), 1.0);
+				}
 				continue;
 			}
 			const bool bFacing = GetFacing().Dot(Direction * -1.0) > 0.2;

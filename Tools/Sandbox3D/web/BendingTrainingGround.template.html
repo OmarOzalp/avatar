@@ -438,6 +438,7 @@ body {
     <button class="pad" data-slot="4" type="button">F</button>
     <button class="pad" data-sprint="1" type="button">Run</button>
     <button class="pad" data-guard="1" type="button">Guard</button>
+    <button class="pad" data-dodge="1" type="button">Roll</button>
   </div>
 </div>
 
@@ -457,7 +458,7 @@ body {
       <kbd>1 2 3 4</kbd><span>Water, Earth, Fire, Air stance</span>
       <kbd>LMB RMB Q E</kbd><span>Your stance's techniques (shown at the bottom)</span>
       <kbd>F</kbd><span>Signature move: Ice Daggers, Earthquake, Ring of Fire, Tornado</span>
-      <kbd>C</kbd><span>Guard (hold); raise it just as a blast arrives to parry it back</span>
+      <kbd>C · V</kbd><span>Guard (hold; raise it just as a blast arrives to parry it back) · roll out of the way</span>
       <kbd>H · R · M · Esc</kbd><span>Technique list · reset the field · sound on/off · free the mouse</span>
       <kbd>The field</kbd><span>Burn banners and straw, smash crates, burst water barrels, light the lanterns</span>
       <kbd>Sparring</kbd><span>A firebender waits in the ring: hit them to start a duel</span>
@@ -475,7 +476,7 @@ body {
     <div class="table-wrap"><table id="tech-table"><thead><tr><th>Technique</th><th>Key</th><th>Frames</th><th>What it does</th></tr></thead><tbody></tbody></table></div>
     <p class="fine">Work is billed on top of the flat cost: 5 kJ of motion or 250 kJ of heat buys one point of chi. Out of chi, techniques weaken instead of failing.</p>
     <p class="fine"><b>The field reacts:</b> fire burns the banners, straw bales, crates and dummies (and spreads between them), lights the stone lanterns, and water puts all of it out. Thrown rocks and earthquakes smash crates and burst water barrels, which soak the ground. A waterbender can draw a whip from a barrel as well as a pond.</p>
-    <p class="fine"><b>Sparring:</b> hit the firebender waiting in the ring and they bow and duel you. Watch for the wind-up (a glowing fist) and strike first, or hold <b>C</b> to guard: a guard soaks most of a blast for stamina, and one raised just as the blast arrives parries it straight back. They guard and sidestep too, but not while winding up or recovering. Walls, lanterns and rocks block their line of fire.</p>
+    <p class="fine"><b>Sparring:</b> hit the firebender waiting in the ring and they bow and duel you. Watch for the wind-up (a glowing fist) and strike first, or hold <b>C</b> to guard: a guard soaks most of a blast for stamina, and one raised just as the blast arrives parries it straight back. <b>V</b> rolls the way you are moving (back, with no direction), and a blast passes straight through a roll. They guard and sidestep too, but not while winding up or recovering. Walls, lanterns and rocks block their line of fire.</p>
     <button class="go" id="help-close" type="button">Back to training</button>
   </div>
 </div>
@@ -497,7 +498,7 @@ const PROP = { STONE: 0, ROCK: 1, BOULDER: 2, CLOD: 3, DUMMY: 4, BRAZIER: 5, ICE
 // Bodies as packed by sb_pack_bodies: 21 kinematic fields, then burn state, burnt and heat fractions, wetness, water
 // held, yaw, variant, a dummy's health (0..1) and seconds left knocked out.
 const BODY_STRIDE = 30;
-const PLAYER_FIELDS = 58;
+const PLAYER_FIELDS = 62;
 const RIVAL_FIELDS = 28;
 const PROJ = { FIRE: 0, AIR: 1, WATER: 2, GROUND_FLAME: 3, SPRAY: 4, ICE_SHARD: 5 };
 const REACTION = ['None', 'Evaporation', 'Condensation', 'Melting', 'Freezing', 'Oxygenation', 'Saturation', 'MudFormed', 'Deflection', 'Erosion', 'Extinguished'];
@@ -2675,7 +2676,7 @@ function start() {
   const slotHeld = [false, false, false, false, false];
   // A tap shorter than a frame still reaches the simulation: presses latch until the next frame is sent.
   const slotTapped = [false, false, false, false, false];
-  let jumpHeld = false, jumpTapped = false, sprintToggle = false, guardHeld = false, guardTouch = false;
+  let jumpHeld = false, jumpTapped = false, sprintToggle = false, guardHeld = false, guardTouch = false, dodgeTapped = false;
   let stanceRequest = 0;
   let yaw = 0, pitch = -0.18;
   let locked = false, playing = false;
@@ -2689,6 +2690,7 @@ function start() {
     if (e.code === 'KeyE') slotHeld[3] = slotTapped[3] = true;
     if (e.code === 'KeyF') slotHeld[4] = slotTapped[4] = true;
     if (e.code === 'KeyC') guardHeld = true;
+    if (e.code === 'KeyV' && !e.repeat) dodgeTapped = true;
     if (e.code === 'Space') jumpTapped = true;
     if (e.code === 'KeyR' && !e.repeat) { W.sb_reset(); updateTerrainRect(0, 0, SX - 1, SY - 1); flushTerrain(); seenSerial = 0; pushLog('Training ground reset'); }
     if (e.code === 'Space') e.preventDefault();
@@ -2762,6 +2764,7 @@ function start() {
         if (pad.dataset.jump) { jumpHeld = down; if (down) jumpTapped = true; }
         if (pad.dataset.sprint && down) { sprintToggle = !sprintToggle; pad.classList.toggle('primary', sprintToggle); }
         if (pad.dataset.guard) guardTouch = down;
+        if (pad.dataset.dodge && down) dodgeTapped = true;
       };
       pad.addEventListener('pointerdown', (e) => { e.preventDefault(); pad.setPointerCapture(e.pointerId); set(true); });
       pad.addEventListener('pointerup', () => set(false));
@@ -2858,6 +2861,8 @@ function start() {
       if (jump) buttons |= 16;
       if (sprint) buttons |= 32;
       if (playing && (guardHeld || guardTouch)) buttons |= 128;
+      if (playing && dodgeTapped) buttons |= 256;
+      dodgeTapped = false;
       W.sb_set_input(forward, right, camPos.x, camPos.y, camPos.z, camDir.x, camDir.y, camDir.z, buttons, stanceRequest);
       stanceRequest = 0;
       W.sb_advance(dt);
@@ -3014,7 +3019,7 @@ function start() {
   }
   const qTmp = new THREE.Quaternion(), mTmp = new THREE.Matrix4(), xAxis = new THREE.Vector3(), yAxis = new THREE.Vector3(), zAxis = new THREE.Vector3();
   const FORWARD = new THREE.Vector3(1, 0, 0);
-  const qYaw = new THREE.Quaternion();
+  const qYaw = new THREE.Quaternion(), qRoll = new THREE.Quaternion();
   // Point an arm's upper segment along dir (torso space) and bend the elbow forward by bend (rad).
   function poseArm(a, name, dir, bend, rate, dt) {
     yAxis.copy(dir).normalize().negate();
@@ -3231,7 +3236,18 @@ function start() {
     if (downT > 0) { rDir = V(0.0, 0.1, 1.0); lDir = V(0.0, 0.2, -1.0); rBend = lBend = 0.3; crouch = 0; kneeR = 0.3; kneeL = 0.5; rp = 0.2; lp = -0.1; lean = 0; twist = 0; }
     const downK = spring('down', downT > 0 ? 1 : 0, downT > 0 ? 9 : 4, dt);
     qYaw.setFromAxisAngle(UP, player[3] + spin);
-    if (downK > 0.001) { tmpV.set(-player[56], 0, -player[55]).normalize(); human.quaternion.setFromAxisAngle(tmpV, 1.45 * downK).multiply(qYaw); }
+    const dodgeT = player[58], rolling = dodgeT > 0;
+    if (rolling) {
+      // A forward roll the way they are going: tucked tight, one full turn about the hips.
+      const p = 1 - dodgeT / player[61], turn = Math.PI * 2 * (p < 0.85 ? p / 0.85 : 1);
+      crouch = 0.3; kneeR = kneeL = 1.5; rp = lp = 0.9; rDir = V(0.6, -0.4, 0.3); lDir = V(0.6, -0.4, -0.3); rBend = lBend = 2.0; lean = -0.4;
+      tmpV.set(player[59], 0, -player[60]).normalize();
+      tmpV2.crossVectors(UP, tmpV).normalize();
+      qRoll.setFromAxisAngle(tmpV2, turn);
+      human.quaternion.copy(qRoll).multiply(qYaw);
+      tmpV3.set(0, 0.5, 0).applyQuaternion(qRoll);
+      human.position.x -= tmpV3.x; human.position.y += 0.5 - tmpV3.y; human.position.z -= tmpV3.z;
+    } else if (downK > 0.001) { tmpV.set(-player[56], 0, -player[55]).normalize(); human.quaternion.setFromAxisAngle(tmpV, 1.45 * downK).multiply(qYaw); }
     else human.quaternion.copy(qYaw);
     eyes.scale.y = downT > 0.5 ? 0.12 : eyes.scale.y;
 
@@ -3300,9 +3316,15 @@ function start() {
     let rDir = V(0.55, -0.72, 0.28), rBend = 2.15, lDir = V(0.6, -0.7, -0.25), lBend = 2.25;
     crouch = 0.06 + Math.abs(Math.sin(t * 5)) * 0.015;
     if (run > 0.05 && state !== RS.DOWN) {
+      // Stepping forward or back swings the legs; circling sideways (facing the player) is a side-step.
       const sw = Math.sin(stride);
-      rp = sw * 0.7 * run; lp = -sw * 0.7 * run;
-      kneeR = 0.2 + Math.max(0, -Math.cos(stride)) * 1.0 * run; kneeL = 0.2 + Math.max(0, Math.cos(stride)) * 1.0 * run;
+      const along = speed > 0.05 ? (rival[9] * Math.cos(rival[8]) + rival[10] * Math.sin(rival[8])) / (speed * 100) : 1;
+      const across = Math.sqrt(Math.max(0, 1 - along * along));
+      rp = sw * 0.7 * run * along; lp = -sw * 0.7 * run * along;
+      spreadR = 0.1 + Math.max(0, sw) * 0.4 * across * Math.min(1, run * 2);
+      spreadL = 0.1 + Math.max(0, -sw) * 0.4 * across * Math.min(1, run * 2);
+      kneeR = 0.25 + Math.max(0, -Math.cos(stride)) * (0.4 + 0.6 * Math.abs(along)) * run;
+      kneeL = 0.25 + Math.max(0, Math.cos(stride)) * (0.4 + 0.6 * Math.abs(along)) * run;
     }
     const hand = shots % 2 === 0 ? 1 : -1;
     switch (state) {
@@ -4013,6 +4035,11 @@ function start() {
         if (detail === 1) sfx.play('block', x, y, z, 0.6);
         else sfx.play('airWhoosh', x, y, z, 0.5);
         break;
+      case 21: // the player rolled (energy 1: a blast passed straight through the roll)
+        if (energy > 0.5) { floatLabel('Dodged!', x, y + 0.5, z, 'dodged', 'block'); sfx.play('airWhoosh', x, y, z, 0.7); break; }
+        sfx.play('airWhoosh', x, y, z, 0.6);
+        for (let i = 0; i < 8; i++) smoke.spawn(x + rnd() * 0.4, y + 0.05, z + rnd() * 0.4, rnd() * 1.0, 0.3, rnd() * 1.0, 0.15, 0.7, 0.3, 0.6, 0.3, 0.6);
+        break;
       case 12: // back on its feet: a puff of dust
         for (let i = 0; i < 10; i++) smoke.spawn(x + rnd() * 0.6, y + 0.1, z + rnd() * 0.6, rnd() * 0.8, 0.5 + Math.random() * 0.5, rnd() * 0.8, 0.2, 0.9, 0.3, 0.9 + Math.random() * 0.4, 0.2, 0.6);
         break;
@@ -4112,6 +4139,8 @@ function start() {
           floatLabel('Wind feeds the flame', x, y + 1.2, z, 'oxy');
           break;
         case 'Deflection':
+          // In a duel the damage numbers tell the story; the push on the sparring partner would only crowd them.
+          if ((rival[25] > 0 || uTime.value - duelEndT < 1.5) && Math.hypot(e[o + 1] - rival[5], e[o + 2] - rival[6]) < 250) break;
           if (mass > 0 || e[o + 5] > 50) floatLabel(`${(e[o + 5] / 1000).toFixed(e[o + 5] < 1000 ? 2 : 1)} kJ of push`, x, y + 0.9, z, 'push');
           break;
         default:
@@ -4225,7 +4254,7 @@ function start() {
   window.trainingGround = {
     look(dYaw, dPitch) { yaw += dYaw; pitch = Math.min(0.75, Math.max(-1.25, pitch + dPitch)); },
     face(x, y, z) { const dx = x - P.x, dy = y - P.y, dz = z - (P.z + 165); yaw = Math.atan2(dy, dx); pitch = Math.atan2(dz, Math.hypot(dx, dy)); },
-    state() { const p = f64(W.sb_player(), PLAYER_FIELDS); return { x: p[0], y: p[1], z: p[2], stance: p[8], move: p[9], phase: p[10], chi: p[13], whip: p[36] > 0, whipKg: p[37], health: p[49], guarding: p[51] > 0, down: p[54] }; },
+    state() { const p = f64(W.sb_player(), PLAYER_FIELDS); return { x: p[0], y: p[1], z: p[2], stance: p[8], move: p[9], phase: p[10], chi: p[13], whip: p[36] > 0, whipKg: p[37], health: p[49], guarding: p[51] > 0, down: p[54], dodge: p[58] }; },
     /** Manual clock: frames advance only through step(), exactly 1/60 s each, so captures line up with the physics. */
     manual(on) {
       if (on && manualClock === null) manualClock = performance.now();
@@ -4234,8 +4263,9 @@ function start() {
     step(frames = 1, dt = 1 / 60) { for (let i = 0; i < frames; i++) { manualClock += dt * 1000; tick(dt, manualClock, i === frames - 1); } },
     /** Press (and release on the next frame) one of the four technique slots: 0 LMB, 1 RMB, 2 Q, 3 E. */
     tap(slot) { slotTapped[slot] = true; },
-    /** Hold or release the guard (C). */
+    /** Hold or release the guard (C); roll (V). */
     guard(down) { guardHeld = down; },
+    dodge() { dodgeTapped = true; },
     /** The sparring partner: state (0 waiting ... 10 returning), position, health, the duel's score. */
     rival() { const r = f64(W.sb_rival(), RIVAL_FIELDS); return { state: r[1], attack: r[2], x: r[5], y: r[6], z: r[7], health: r[13], duel: r[25] > 0, wins: r[21], losses: r[22] }; },
     hold(slot, down) { slotHeld[slot] = down; },
