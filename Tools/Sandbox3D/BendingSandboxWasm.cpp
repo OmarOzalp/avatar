@@ -16,7 +16,7 @@ namespace
 {
 	constexpr int PlayerFields = 40;
 	constexpr int BodyStride = 21;
-	constexpr int VolumeStride = 16;
+	constexpr int VolumeStride = 18;
 	constexpr int WhipStride = 6;
 	constexpr int PatchStride = 5;
 	constexpr int PondStride = 6;
@@ -210,6 +210,9 @@ SB_EXPORT(sb_pack_volumes) int SbPackVolumes()
 		O[13] = V->Shape == EShape::Capsule ? V->CapsuleHalfAxisCm.Z : 0.0;
 		O[14] = Projectile >= 0 ? static_cast<double>(S.Projectiles[Projectile].Kind) : -1.0;
 		O[15] = Projectile >= 0 && S.Projectiles[Projectile].bLanded ? 1.0 : 0.0;
+		// The projectile's slot (stable while it lives) and age, so presentation can keep per-projectile effects.
+		O[16] = Projectile >= 0 ? static_cast<double>(Projectile) : -1.0;
+		O[17] = Projectile >= 0 ? S.Projectiles[Projectile].AgeS : 0.0;
 	}
 	return Count;
 }

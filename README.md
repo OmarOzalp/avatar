@@ -9,9 +9,9 @@ Bending is real physics with martial-arts timing:
 
 ## Play the training ground
 
-A low-poly third-person sandbox: walk around a small valley with two ponds, rocks, boulders, training dummies,
-braziers and a block of ice, and bend all four elements. The ground is deformable, the water whip is a simulated
-chain of water, and everything you throw interacts through the same physics kernel.
+A third-person sandbox: walk around a training arena in a small valley, with two ponds, rocks, boulders, straw
+dummies, braziers and blocks of ice, and bend all four elements. The ground is deformable, the water whip is a
+simulated stream of water, and everything you throw interacts through the same physics kernel.
 
 ### In Unreal Engine 5.8
 
@@ -33,8 +33,16 @@ engine basic shapes, and the HUD is drawn on the canvas.
 Tools/Sandbox3D/build_web.sh     # writes Tools/Sandbox3D/build/BendingTrainingGround.html: open it in a browser
 ```
 
-The browser build is the same arena and techniques, running the same C++ kernel compiled to WebAssembly and drawn
-with three.js. It is the quickest way to try a change to the physics.
+The browser build is the same arena and techniques, running the same C++ kernel compiled to WebAssembly, and it is
+where the look is developed first. It has:
+- **Lighting:** physically based, with filmic tone mapping, a sky with drifting clouds and distant mountains.
+- **Ground and arena:** textured ground with grass, a sand arena ringed by stone, banners in the four elements'
+  colours, lanterns and trees.
+- **Water:** a glossy, rippling whip, droplets and splashes, and ponds with waves, reflections and ripples.
+- **Fire:** animated flames with embers and smoke.
+
+It is also the quickest way to try a change to the physics. The Unreal build still draws everything with basic
+shapes; its materials and Niagara effects come next.
 
 ### Controls
 
@@ -49,7 +57,7 @@ with three.js. It is the quickest way to try a change to the physics.
 
 | Stance | Left mouse | Right mouse | Q | E |
 |---|---|---|---|---|
-| **1 Water** | Water Whip: draw from a pond within 15 m, then lash (hold to keep it extended) | Freeze / Thaw the whip | Release: the water soaks into the ground (mud) | Water Blast: throw the whip as one ball |
+| **1 Water** | Water Whip: draw from a pond within 15 m and it circles you; press to lash, and it snaps out to the aim and flows back | Freeze / Thaw the whip | Release: the water soaks into the ground (mud) | Water Blast: throw the whip as one ball |
 | **2 Earth** | Rock Throw: pull a rock from the ground (leaves a crater) and hurl it | Earth Wall | Raise Ground (hold) | Lower Ground (hold) |
 | **3 Fire** | Fire Blast | Flame Stream (hold) | | Ground Flame (hold) |
 | **4 Air** | Air Blast | Gust (hold) | | Air Jump |
@@ -58,7 +66,8 @@ The HUD shows chi and stamina, the current move's Startup / Active / Recovery fr
 each technique did and what it cost, and every reaction between elements as it happens.
 
 **Things to try**
-- Lash the whip into a lit brazier and hold it there: the water boils to steam and the fire goes out. Hit the brazier with fire to relight it.
+- Lash a lit brazier: the stream and the spray flung off its tip boil to steam, and two lashes put the fire out. Hit the brazier with fire to relight it.
+- Lash the ground in front of you: the stream slaps it and splashes.
 - Freeze the whip (it costs about 32 chi to freeze 20 kg of water), then thaw it again.
 - Release the whip or throw a water blast onto soil, then run across the mud. It is slippery: you speed up and stop slowly until a ground flame dries it.
 - Hold a ground flame on the ice block until it melts (about 20 s and 33 MJ).
@@ -98,7 +107,7 @@ docs/ARCHITECTURE.md         Design, equations, roadmap
 The physics kernel builds and runs without the engine (clang++ and Node 18+):
 
 ```
-Tests/run_all.sh                 # 191 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
+Tests/run_all.sh                 # 201 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
 Tools/SimDemo/build_sandbox.sh   # writes Tools/SimDemo/build/BendingLab.html (the 2D reaction lab)
 ```
 

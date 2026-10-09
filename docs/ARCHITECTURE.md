@@ -191,7 +191,7 @@ browser build (`Tools/Sandbox3D`, WebAssembly + three.js) and the Unreal build (
 | Kernel piece | What it holds |
 |---|---|
 | `BendingTerrain.h` — `FTerrain` | A heightfield of soil over bedrock (`BedrockDepthCm`, 300 cm). Earthbending is a brush edit (disc, ring or band with a smooth falloff) that **moves soil**: every raise takes its volume from somewhere else, so total soil volume is conserved exactly. The work billed is the change in the soil's potential energy. `RemoveSoil` / `AddSoil` exchange soil with rocks pulled out of or crumbled back into the ground. `Raycast`, `GetHeightAt` and `GetNormalAt` follow the same triangulation the renderers draw (diagonal (x,y)→(x+1,y+1)), so what you see is what you stand on. A dirty rectangle tells renderers which cells changed. |
-| `BendingWaterWhip.h` — `FWaterWhip` | A position-based-dynamics chain of 16 points (550 cm, 20 kg). Each segment is an owned Water **capsule volume in the `FSimWorld`**, so the whip boils against fire, soaks soil, shoves rocks and freezes like any other water. The hand drives it with a spring-damper whose acceleration is capped (160 m/s²): the bender's force budget is physical. A lash is a straightening wave that runs from the hand to the tip toward the aim in 0.35 s, and holding keeps the whip extended. Freezing extracts `m(cΔT + L_f)` segment by segment from the hand outward, so running short of chi freezes part of it. Release removes the segments and hands each parcel (position, velocity, mass, temperature) to the owner. Per frame: `PreStep` → world step → `PostStep`. |
+| `BendingWaterWhip.h` — `FWaterWhip` | A stream of water simulated as a position-based-dynamics chain of 40 points (550 cm, 20 kg), tapering from 4.6 cm radius at the hand to 2 cm at the tip like a whip. Each segment is an owned Water **capsule volume in the `FSimWorld`**, so the whip boils against fire, soaks soil, shoves rocks and freezes like any other water. The motion follows waterbending's Tai Chi roots, continuous and circular, push and pull. **Holding:** the water circles the bender's chest in a loose loop. **Lash:** the move's startup frames draw the stream back over the shoulder, and its active frames are the snap. A loop rolls down the stream toward the aim in a three-quarter sidearm plane, so the tip travels at twice the loop's speed. After a beat at full reach, the stream flows back, hand first, into the loop. Nothing is held, and lashes chain on the way back. The bender's control is a spring-damper along the intended motion, capped at 450 m/s². Stretch is capped at 8%, so a stream pulled tight stops dead: that is the crack. At the crack the tip flings 8% of its water forward as spray (`ConsumeSpray`), which the owner spawns as a droplet cloud that slows in the air. Freezing extracts `m(cΔT + L_f)` segment by segment from the hand outward. Release hands each parcel to the owner. Per frame: `PreStep` → world step → `PostStep`. |
 | `BendingTechniques.h` | The 14 techniques: element, input slot, Startup / Active / Recovery frames, flat chi and stamina, whether held. `FTechniqueTuning` holds every physical parameter (masses, speeds, temperatures, brush sizes, chi exchange rates). Recipe functions build the matter (`MakeFlame`, `MakeBentAir`, `MakeWaterBall`, `MakeRock`) and the brushes (`EarthWallBrushes`, `RaiseGroundBrushes`, …). |
 | `BendingArena.h` | The training ground: a 96 × 96 m terrain (241² samples, 40 cm cells) with a plaza, hills, two pond basins and a boundary ridge, the prop placements (stones, rocks, boulders, soil clods, dummies, braziers, ice blocks), each prop's physical volume, and the player start. |
 
@@ -209,7 +209,7 @@ table, and the HUD draws on the canvas.
 | `AAvatarCharacter` | A basic-shape body (about 22 parts) with procedural walk, jump and casting poses, tinted by stance. Builds its Enhanced Input objects at runtime, grants the four sandbox disciplines, and scales friction, braking and acceleration by the ground's traction (mud). |
 | `UBendingTechniqueMove` / `UBendingTechniqueAbility` | One move per technique, built at runtime (`UBendingSandboxLibrary::CreateTechniqueDisciplines`), and one ability class for all of them. GAS and `UBendingComponent` run them like any move (costs, frame-data phases, input buffer, cancel windows), and the ability forwards each phase to the technique component. |
 | `UBendingTechniqueComponent` | Does the physics of each technique: aim (camera trace, falling back to a terrain raycast), the whip, rocks pulled out of the ground (at most 10 thrown rocks; the oldest crumbles back into the soil), walls, pillars and pits, fire, air, the air jump. Every joule goes through `SpendChiForEnergy`, and the effect is scaled by what was granted. |
-| `ABendingWaterWhipActor` | Owns an `FWaterWhip` whose segments live in the interaction subsystem's `FSimWorld`. Per frame: `PostStep` → `SetControl` from hand and aim → `PreStep`; the subsystem steps the world at the end of the frame. Draws water and ice with instanced spheres and ellipsoids. |
+| `ABendingWaterWhipActor` | Owns an `FWaterWhip` whose segments live in the interaction subsystem's `FSimWorld`. Per frame: `PostStep` → `SetBodyCenter` and `SetControl` from the bender → `PreStep`, then the subsystem steps the world at the end of the frame. Spray from the snap becomes a water projectile that slows in the air. The stream is drawn as small overlapping spheres along a Catmull-Rom curve. Fast water sheds droplets, and the stream splashes where it slaps the ground. |
 | `ABendingProjectile` | Bent fire, air or water in flight with a `UElementalVolumeComponent`. Applies reaction impulses as `Δv = J/m`. On landing a flame burns on the ground, a water ball soaks in (mud) or rejoins a pond, and air flows along the ground. |
 | `ABendingPropActor` | Props with their kernel volume. Rocks, clods and dummies simulate physics and receive reaction impulses. Braziers keep a flame burning (water puts it out, flame relights it). Ice blocks melt into the soil. |
 | `AAvatarHUD` | Crosshair, chi and stamina, the stance's four techniques, a Startup / Active / Recovery frame bar with the cancel window, a feed of what each technique did and every reaction, mud traction, and the controls panel. |
@@ -230,10 +230,15 @@ builds both WebAssembly modules and checks them against the native results.
 - **Terrain & earthbending (28 checks):** interpolation and raycasts on the shared triangulation, conservation (300
   random pillars, walls and pits move 684 m³ of soil and the total does not change), work equals the potential
   energy gained, the bedrock floor, and dirty regions.
-- **Water whip (30 checks):** drawing and holding, lash reach, the force budget (control weaker than gravity cannot
-  hold the water up), whip against fire, freeze and thaw, partial freezing when short of chi, release, following a
-  sprinting bender, and determinism.
-- **3D sandbox (47 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
+- **Water whip (39 checks):**
+  - drawing and holding;
+  - the lash: reach, aim, the spray (water conserved), and coming back on its own;
+  - chained lashes, and the taper;
+  - the force budget: control weaker than gravity cannot hold the water up;
+  - the whip against fire;
+  - freeze and thaw, and partial freezing by mass when short of chi;
+  - release, following a sprinting bender, and determinism.
+- **3D sandbox (48 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
   jumping, every technique, chi, determinism and cost.
 - **WebAssembly parity:** both freestanding wasm builds replay their sessions and must match the native digests exactly.
 
@@ -253,12 +258,12 @@ builds both WebAssembly modules and checks them against the native results.
 | Earth Wall | A wall 180 cm tall from 11.2 t of soil for 118 kJ. A player walking into it is stopped. |
 | Rock Throw | A 320 kg rock pulled out of the ground leaves at 20.2 m/s and comes to rest 51.9 m away. |
 | Raise / Lower Ground | 2 s of Raise Ground lifts a 104 cm pillar; 1.5 s of Lower Ground digs a 53 cm pit. |
-| Water Whip | The lash tip peaks at 35.4 m/s. Held in a brazier, the whip puts it out in 1.62 s, losing 0.18 kg to steam. |
+| Water Whip | Circles the bender's chest. A lash snaps out to 5.6 m with the tip peaking at 45 m/s, and flings 0.2 kg of spray on at the same speed. 1.25 s later the whip is circling again. Two lashes put out a brazier. |
 | Freeze | The 20 kg whip freezes for 7.94 MJ (32 chi). |
 | Water Blast | Where it lands on soil, traction drops to 0.35. |
 | Air Blast | A 60 kg dummy is shoved 40 cm. A 600 kg boulder does not move. |
 | Ground Flame | Melts a 40 kg ice block in 20 s; the bender pours in 32.9 MJ. |
-| Cost | A 922-frame scripted session runs at 0.016 ms per frame. |
+| Cost | A 922-frame scripted session runs at 0.04 ms per frame. |
 
 **Bending Physics Lab.** `Tools/SimDemo/build_sandbox.sh` writes `Tools/SimDemo/build/BendingLab.html`, a single
 self-contained page that embeds the kernel as WebAssembly (about 120 KB). It provides:
@@ -267,7 +272,19 @@ self-contained page that embeds the kernel as WebAssembly (about 120 KB). It pro
 - sliders for the reaction parameters.
 
 **Bending Training Ground.** `Tools/Sandbox3D/build_web.sh` writes `Tools/Sandbox3D/build/BendingTrainingGround.html`,
-the 3D sandbox in a browser: the same arena, controls and techniques as the Unreal build.
+the 3D sandbox in a browser: the same arena, controls and techniques as the Unreal build. It is where the look is
+developed first, without image files. Everything is procedural:
+- **Lighting:** linear lighting with ACES tone mapping. A sky shader gives the clouds and sun, and its image-based
+  lighting is what glossy surfaces reflect.
+- **Ground:** canvas-generated detail textures, wetness that darkens soil and makes it shiny, and instanced grass that
+  re-seats when the ground is bent.
+- **Water:** the whip is a tube rebuilt every frame through the chain points, with a shader for Fresnel sky reflection,
+  light through the stream, flowing ripples and white water. Droplets and splash rings come from what the simulation
+  reports. Ponds have waves, depth colour, shore foam and ring ripples.
+- **Fire, smoke and steam:** instanced noise sprites emitted from the simulated volumes.
+
+`window.trainingGround` exposes a manual clock (`manual`, `step`), input taps and a render-only camera (`view`).
+Automated captures use them to line up frame by frame with the physics.
 
 ## Open world
 
@@ -290,8 +307,8 @@ The GAS layer is network-shaped: abilities are `LocalPredicted`, the ability sys
 ## Next milestones
 
 1. **First Unreal build** of the sandbox (see below), then playtest the tuning in engine.
-2. **Animation**: replace the basic-shape body and procedural poses with a skeletal mesh and montages carrying `Bending Phase` notifies. The frame data and abilities already support both.
-3. **Presentation subsystem**: map reaction events and volumes to Niagara user parameters (a ribbon skin for the whip, flame and steam systems, mud decals). Gameplay never reads them back.
+2. **Presentation in Unreal**: port the browser look as materials and Niagara. That means a water material for the whip skin and the ponds (Fresnel, ripples, foam), flame, smoke and steam systems, droplets and splashes driven by reaction events, and ground wetness. Gameplay never reads them back.
+3. **Animation**: replace the basic-shape body and procedural poses with a skeletal mesh and montages carrying `Bending Phase` notifies. The frame data and abilities already support both.
 4. **Earthbending on real ground**: drive `FTerrain` from landscape tiles, physical material → density and porosity, rocks as pre-fractured Geometry Collections.
 5. **Pooling**: `UBendingPoolSubsystem` for projectiles and props. Niagara uses its own component pooling (`ENCPoolMethod::AutoRelease`).
 6. **Airbending**: Chaos field velocity for loose bodies, a point wind source for cloth, and a render-target imprint for foliage.
