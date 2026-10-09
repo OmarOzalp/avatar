@@ -431,7 +431,7 @@ body {
       <kbd>1 2 3 4</kbd><span>Water, Earth, Fire, Air stance</span>
       <kbd>LMB RMB Q E</kbd><span>Your stance's techniques (shown at the bottom)</span>
       <kbd>F</kbd><span>Signature move: Ice Daggers, Earthquake, Ring of Fire, Tornado</span>
-      <kbd>H · R · Esc</kbd><span>Technique list · reset the field · free the mouse</span>
+      <kbd>H · R · M · Esc</kbd><span>Technique list · reset the field · sound on/off · free the mouse</span>
       <kbd>The field</kbd><span>Burn banners and straw, smash crates, burst water barrels, light the lanterns</span>
     </div>
     <button class="go" id="play" type="button">Start training</button>
@@ -2283,6 +2283,143 @@ function start() {
     }
   }
 
+  // ---------------------------------------------------------------- Sound: procedural Web Audio, no files
+  // Every sound is built from noise and oscillators shaped by filters and envelopes, panned and attenuated by where
+  // it happens relative to the camera. The context starts with the first click (browsers require a gesture); M mutes.
+  const sfx = (() => {
+    let ctx = null, master = null, noise = null, muted = false, fireBed = null, windBed = null;
+    const camRight = new THREE.Vector3(), toSound = new THREE.Vector3();
+    const lastPlayed = {};
+    function loopBed(freq, q) {
+      const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true;
+      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q;
+      const g = ctx.createGain(); g.gain.value = 0;
+      src.connect(f); f.connect(g); g.connect(master); src.start();
+      return { f, g };
+    }
+    function start() {
+      if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try { ctx = new AC(); } catch (err) { ctx = null; return; }
+      const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 6;
+      master = ctx.createGain(); master.gain.value = muted ? 0 : 0.8;
+      master.connect(comp); comp.connect(ctx.destination);
+      noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      fireBed = loopBed(900, 0.6);
+      windBed = loopBed(500, 1.2);
+    }
+    // Pan and level for a sound at a point (three.js metres); no point means "here".
+    function out(node, at) {
+      let pan = 0, level = 1;
+      if (at) {
+        toSound.set(at[0] - camera.position.x, at[1] - camera.position.y, at[2] - camera.position.z);
+        const d = toSound.length();
+        camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+        pan = d > 0.01 ? Math.max(-1, Math.min(1, toSound.dot(camRight) / d)) * 0.8 : 0;
+        level = 1 / (1 + d / 9);
+      }
+      const g = ctx.createGain(); g.gain.value = level;
+      node.connect(g);
+      if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = pan; g.connect(p); p.connect(master); } else g.connect(master);
+    }
+    // A burst of filtered noise sweeping from f0 to f1 over len seconds.
+    function noiseBurst(type, f0, f1, len, peak, at, q, attack) {
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource(); src.buffer = noise; src.playbackRate.value = 0.8 + Math.random() * 0.4;
+      const f = ctx.createBiquadFilter(); f.type = type; f.Q.value = q || 1;
+      f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + len);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + (attack || 0.005)); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      src.connect(f); f.connect(g); out(g, at);
+      src.start(t, Math.random() * 1.5); src.stop(t + len + 0.05);
+    }
+    // A pitched tone gliding from f0 to f1.
+    function tone(wave, f0, f1, len, peak, at, delay) {
+      const t = ctx.currentTime + (delay || 0);
+      const o = ctx.createOscillator(); o.type = wave;
+      o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + len);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      o.connect(g); out(g, at);
+      o.start(t); o.stop(t + len + 0.05);
+    }
+    const sounds = {
+      fireWhoosh: (at, k) => { noiseBurst('lowpass', 2600, 300, 0.45, 0.55 * k, at, 0.7, 0.02); noiseBurst('bandpass', 420, 110, 0.55, 0.4 * k, at, 0.8, 0.03); },
+      airWhoosh: (at, k) => noiseBurst('bandpass', 2400, 320, 0.5, 0.55 * k, at, 1.4, 0.04),
+      waterWhoosh: (at, k) => noiseBurst('bandpass', 1900, 550, 0.35, 0.45 * k, at, 2, 0.03),
+      crack: (at, k) => { noiseBurst('highpass', 3200, 2000, 0.06, 0.9 * k, at, 0.7, 0.001); tone('square', 1900, 600, 0.05, 0.12 * k, at); },
+      splash: (at, k) => { noiseBurst('lowpass', 3600, 450, 0.38, 0.5 * k, at, 0.8, 0.004); for (let i = 0; i < 3; i++) tone('sine', 900 + Math.random() * 900, 1500 + Math.random() * 900, 0.08, 0.05 * k, at, 0.05 + i * 0.05 + Math.random() * 0.04); },
+      hiss: (at, k) => noiseBurst('highpass', 5200, 3000, 0.7, 0.28 * k, at, 0.5, 0.01),
+      thud: (at, k) => { tone('sine', 120, 38, 0.35, 0.7 * k, at); noiseBurst('lowpass', 900, 120, 0.2, 0.4 * k, at, 0.7, 0.002); },
+      rumble: (at, k) => { tone('sine', 55, 28, 1.2, 0.8 * k, at); noiseBurst('lowpass', 420, 60, 1.3, 0.6 * k, at, 0.7, 0.05); },
+      smash: (at, k) => { noiseBurst('bandpass', 1400, 500, 0.25, 0.7 * k, at, 1.2, 0.001); for (let i = 0; i < 5; i++) tone('triangle', 300 + Math.random() * 500, 150, 0.07, 0.18 * k, at, 0.03 + i * 0.04 + Math.random() * 0.03); },
+      shatter: (at, k) => { for (let i = 0; i < 5; i++) tone('sine', 2500 + Math.random() * 2500, 2000 + Math.random() * 2000, 0.12, 0.08 * k, at, i * 0.02); noiseBurst('highpass', 6000, 4000, 0.12, 0.22 * k, at, 0.7, 0.001); },
+      freeze: (at, k) => { for (let i = 0; i < 4; i++) tone('sine', 1800 + i * 400, 3200 + i * 300, 0.25, 0.05 * k, at, i * 0.05); },
+      hit: (at, k) => { tone('sine', 150, 55, 0.18, 0.6 * k, at); noiseBurst('lowpass', 2200, 300, 0.12, 0.5 * k, at, 0.8, 0.001); },
+      ko: (at) => { tone('triangle', 660, 640, 0.5, 0.25, at); tone('triangle', 440, 430, 0.7, 0.22, at, 0.12); },
+      ignite: (at, k) => noiseBurst('lowpass', 1300, 200, 0.6, 0.6 * k, at, 0.7, 0.06),
+      goal: () => { [523, 659, 784, 1047].forEach((f, i) => tone('triangle', f, f, 0.25, 0.16, undefined, i * 0.08)); },
+    };
+    return {
+      start,
+      toggleMute() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.8; return muted; },
+      play(name, x, y, z, k) {
+        if (!ctx || muted || ctx.state !== 'running') return;
+        const now = ctx.currentTime;
+        if (now - (lastPlayed[name] || -1) < 0.05) return;
+        lastPlayed[name] = now;
+        const f = sounds[name];
+        if (f) f(x === undefined ? undefined : [x, y, z], Math.min(1.6, k === undefined ? 1 : k));
+      },
+      // Continuous beds: the crackle of the fires near the camera, and wind from tornadoes and the air scooter.
+      update(fireLevel, windLevel) {
+        if (!ctx || !fireBed) return;
+        const t = ctx.currentTime;
+        fireBed.g.gain.setTargetAtTime(Math.min(0.45, fireLevel * (0.5 + 0.5 * Math.random())), t, 0.03);
+        fireBed.f.frequency.setTargetAtTime(500 + Math.random() * 1300, t, 0.02);
+        windBed.g.gain.setTargetAtTime(Math.min(0.4, windLevel), t, 0.2);
+        windBed.f.frequency.setTargetAtTime(350 + windLevel * 600 + Math.sin(t * 1.7) * 120, t, 0.2);
+      },
+    };
+  })();
+  // Sounds for the bender's own moves, at the moment each strikes.
+  const sfxMove = { key: '' };
+  function moveSounds() {
+    const move = player[9] | 0, phase = player[10] | 0, hold = player[12] | 0;
+    const key = `${move}|${phase}|${hold}`;
+    if (key === sfxMove.key) return;
+    sfxMove.key = key;
+    const name = (techById[hold] || techById[move] || {}).name || '';
+    const at = [human.position.x, human.position.y + 1.2, human.position.z];
+    if (phase === 1 && name === 'Rock Throw') sfx.play('thud', ...at, 0.7);
+    if (phase === 1 && name === 'Water Whip' && player[36] > 0) sfx.play('waterWhoosh', ...at, 0.8);
+    if (phase !== 2 && !(hold && phase === 0)) return;
+    switch (name) {
+      case 'Fire Blast': sfx.play('fireWhoosh', ...at, 1); break;
+      case 'Jet Dash': case 'Ring of Fire': sfx.play('fireWhoosh', ...at, 1.4); break;
+      case 'Ground Flame': sfx.play('ignite', ...at, 0.7); break;
+      case 'Air Blast': case 'Gust': sfx.play('airWhoosh', ...at, 1); break;
+      case 'Air Jump': case 'Tornado': sfx.play('airWhoosh', ...at, 1.3); break;
+      case 'Water Whip': sfx.play(player[36] > 0 ? 'crack' : 'splash', ...at, 1); break;
+      case 'Water Blast': sfx.play('waterWhoosh', ...at, 1.2); break;
+      case 'Release': sfx.play('splash', ...at, 0.8); break;
+      case 'Freeze / Thaw': sfx.play('freeze', ...at, 1); break;
+      case 'Ice Daggers': sfx.play('airWhoosh', ...at, 0.6); sfx.play('freeze', ...at, 0.8); break;
+      case 'Rock Throw': sfx.play('airWhoosh', ...at, 1.2); break;
+      case 'Earth Wall': case 'Raise Ground': case 'Lower Ground': sfx.play('rumble', ...at, 0.5); break;
+      default: break;
+    }
+  }
+  function soundBeds() {
+    let fire = 0;
+    for (const f of fireSpots) fire += Math.min(1, f.power / 900) / (1 + f.p.distanceTo(camera.position) / 5);
+    const wind = (player[40] >= 0 ? 0.35 : 0) + (player[46] > 0 ? 0.2 : 0);
+    sfx.update(Math.min(1, fire * 0.5), wind);
+  }
+
   // ---------------------------------------------------------------- Combat feedback: health bars, hits, combos
   const hpBars = new Map();
   function stepHealthBars(dt) {
@@ -2370,6 +2507,7 @@ function start() {
     toastEl.querySelector('.what').textContent = goal ? goal[1] : '';
     toastEl.classList.remove('show'); void toastEl.offsetWidth; toastEl.classList.add('show');
     toastTimer = 3.2;
+    sfx.play('goal');
   }
   function stepGoals(dt) {
     if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) toastEl.classList.remove('show'); }
@@ -2471,6 +2609,7 @@ function start() {
   const KEY_STANCE = { Digit1: 2, Digit2: 1, Digit3: 3, Digit4: 4, Numpad1: 2, Numpad2: 1, Numpad3: 3, Numpad4: 4 };
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyH') { toggleHelp(); return; }
+    if (e.code === 'KeyM' && !e.repeat) { pushLog(sfx.toggleMute() ? 'Sound off (M)' : 'Sound on (M)'); return; }
     if (!playing) return;
     if (KEY_STANCE[e.code]) stanceRequest = KEY_STANCE[e.code];
     if (e.code === 'KeyQ') slotHeld[2] = slotTapped[2] = true;
@@ -2563,6 +2702,7 @@ function start() {
   $('play').addEventListener('click', () => {
     $('start').hidden = true;
     playing = true;
+    sfx.start();
     if (!coarse) requestLock();
   });
   $('boot-note').textContent = coarse ? 'Touch: left stick moves, drag to look, buttons cast. A keyboard and mouse play best.' : 'Click the field to capture the mouse; Esc frees it.';
@@ -2696,6 +2836,8 @@ function start() {
     stepCombo();
     stepGoals(dt);
     updateHud();
+    moveSounds();
+    soundBeds();
     stepLog();
 
 
@@ -3482,11 +3624,13 @@ function start() {
   function techniqueEffect(kind, x, y, z, detail, energy) {
     switch (kind) {
       case 1: // ice dagger shatters
+        sfx.play('shatter', x, y, z, 0.8);
         emit(x, y, z, 14, 0xe6f8ff, 3, 1.6, 6, 0.6);
         break;
       case 2: { // earthquake: the ground ripples outward, dust jumps
         quakeU.value.set(x, z, uTime.value, 1);
         Object.assign(quakeFx, { t: 0, x, y, z });
+        sfx.play('rumble', x, y, z, 1.5);
         kick(0.8);
         for (let i = 0; i < 80; i++) {
           const a = Math.random() * Math.PI * 2, r = 0.8 + Math.random() * 7.5, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
@@ -3497,6 +3641,7 @@ function start() {
         break;
       }
       case 3: // ring of fire
+        sfx.play('ignite', x, y, z, 1.2);
         glows.spawn(x, y, z, 0, 0, 0, 1.4, 4.5, 0.55, 0.25, 0, 0);
         kick(0.35);
         floatLabel('RING OF FIRE!', x, y + 1.3, z, 'ring');
@@ -3506,9 +3651,11 @@ function start() {
         for (let i = 0; i < 16; i++) sparks.spawn(x + rnd() * 0.3, y + 0.2, z + rnd() * 0.3, rnd() * 5, Math.random() * 3, rnd() * 5, 0.05, 0.01, 1, 0.5, -2, 1.5, EMBER_SHAPE);
         break;
       case 10: // a dummy took a hit
+        if (energy >= 5) sfx.play('hit', x, y, z, 0.5 + energy / 60);
         registerHit(energy, x, y + 0.3, z);
         break;
       case 11: // knocked out
+        sfx.play('ko', x, y, z);
         floatLabel('K.O.!', x, y + 0.9, z, null, 'ko');
         for (let i = 0; i < 24; i++) sparks.spawn(x, y + 0.4, z, rnd() * 4, 1 + Math.random() * 3, rnd() * 4, 0.05, 0.015, 1, 0.6 + Math.random() * 0.4, -3, 1.5, EMBER_SHAPE);
         kick(0.4);
@@ -3518,6 +3665,7 @@ function start() {
         for (let i = 0; i < 10; i++) smoke.spawn(x + rnd() * 0.6, y + 0.1, z + rnd() * 0.6, rnd() * 0.8, 0.5 + Math.random() * 0.5, rnd() * 0.8, 0.2, 0.9, 0.3, 0.9 + Math.random() * 0.4, 0.2, 0.6);
         break;
       case 6: // a prop caught fire: a whoosh of flame and sparks
+        sfx.play('ignite', x, y, z, detail === PROP.STRAW ? 1.4 : detail === PROP.LANTERN ? 0.4 : 1);
         if (detail === PROP.BANNER) completeGoal('banner');
         if (detail === PROP.LANTERN) completeGoal('lantern');
         if (detail === PROP.LANTERN) { glows.spawn(x, y - 0.55, z, 0, 0, 0, 0.6, 1.4, 0.6, 0.3, 0, 0); floatLabel('Lit!', x, y - 0.1, z, 'lit'); break; }
@@ -3528,11 +3676,13 @@ function start() {
         kick(0.12);
         break;
       case 7: // water put a burning prop out: a hiss of steam
+        sfx.play('hiss', x, y, z, 1.2);
         completeGoal('douse');
         for (let i = 0; i < 16; i++) steamPuffs.spawn(x + rnd() * 0.6, y + rnd() * 0.4, z + rnd() * 0.6, rnd() * 0.6, 0.8 + Math.random() * 0.8, rnd() * 0.6, 0.2, 1.1, 0.6, 1.4 + Math.random() * 0.8, 0.1, 0.5);
         floatLabel(detail === PROP.LANTERN ? 'Out' : 'Doused!', x, y + 0.6, z, 'douse');
         break;
       case 8: // burnt away: a last flare, ash and embers
+        if (detail === PROP.CRATE) sfx.play('smash', x, y, z, 0.6);
         for (let i = 0; i < 12; i++) smoke.spawn(x + rnd() * 0.6, y + Math.random() * 0.5, z + rnd() * 0.6, rnd() * 0.5, 0.6 + Math.random() * 0.6, rnd() * 0.5, 0.3, 1.6, 0.4, 2 + Math.random(), 0.1, 0.4);
         for (let i = 0; i < 20; i++) sparks.spawn(x, y, z, rnd() * 3, Math.random() * 3, rnd() * 3, 0.05, 0.015, 1, 0.8 + Math.random() * 0.6, 1, 1, EMBER_SHAPE, 2);
         if (detail === PROP.CRATE) spawnDebris(plankGeo, debrisMats.charred, x, y - 0.45, z, 8, 1.2);
@@ -3540,6 +3690,8 @@ function start() {
       case 9: { // smashed: boards fly; a barrel bursts in a sheet of water
         const ground = heightAt(x * 100, -z * 100) / 100;
         completeGoal(detail === PROP.BARREL ? 'barrel' : 'crate');
+        sfx.play('smash', x, y, z, 1.1);
+        if (detail === PROP.BARREL) sfx.play('splash', x, y, z, 1.6);
         if (detail === PROP.BARREL) {
           spawnDebris(staveGeo, debrisMats.stave, x, ground + 0.3, z, 10, 2.6);
           splash(x, ground + 0.4, z, 90, 3.6, 0.014, true);
@@ -3569,6 +3721,7 @@ function start() {
         case 'Saturation': {
           const kx = e[o + 1], ky = e[o + 2], pond = pondAt(kx, ky, 1.05);
           if (e[o + 6] > 0) {
+            sfx.play('splash', x, y, z, Math.min(1.4, 0.4 + mass * 0.08));
             // Water landing: a splash, and a ring wave if it fell in a pond.
             if (pond >= 0) { addRipple(pond, kx, ky, 0.8 + mass * 0.4); splash(x, y + 0.02, z, Math.min(60, 12 + mass * 6), 2.4, 0.012, false); }
             else { splash(x, y + 0.03, z, Math.min(60, 14 + mass * 6), 2.2, 0.011, true); splashRing(x, y, z, 0.3 + Math.min(0.6, mass * 0.03)); }
@@ -3579,10 +3732,12 @@ function start() {
           break;
         }
         case 'Evaporation':
+          sfx.play('hiss', x, y, z, Math.min(1, 0.3 + mass * 30));
           for (let i = 0; i < Math.min(7, 1 + mass * 400); i++) steamPuffs.spawn(x + rnd() * 0.3, y + rnd() * 0.3, z + rnd() * 0.3, rnd() * 0.4, 0.6 + Math.random() * 0.4, rnd() * 0.4, 0.22, 0.9, 0.6, 1.3 + Math.random() * 0.5, 0.15, 0.6);
           floatLabel(`${(mass * 1000).toFixed(mass < 0.01 ? 1 : 0)} g → steam`, x, y + 0.8, z, 'evap');
           break;
         case 'Extinguished':
+          sfx.play('hiss', x, y, z, 1);
           for (let i = 0; i < 6; i++) smoke.spawn(x + rnd() * 0.3, y + rnd() * 0.3, z + rnd() * 0.3, rnd() * 0.5, 0.5 + Math.random() * 0.5, rnd() * 0.5, 0.3, 1.2, 0.6, 2 + Math.random(), 0.15, 0.5);
           for (let i = 0; i < 6; i++) steamPuffs.spawn(x + rnd() * 0.3, y + rnd() * 0.3, z + rnd() * 0.3, rnd() * 0.6, 0.8 + Math.random() * 0.6, rnd() * 0.6, 0.25, 1.1, 0.7, 1.4 + Math.random() * 0.6, 0.2, 0.6);
           for (let i = 0; i < 14; i++) sparks.spawn(x, y, z, rnd() * 4, 1 + Math.random() * 3, rnd() * 4, 0.05, 0.012, 1, 0.5 + Math.random() * 0.5, -2.5, 1.2, EMBER_SHAPE);

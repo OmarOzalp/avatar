@@ -58,6 +58,8 @@ where the look is developed first. It is a bright, cel-shaded cartoon:
   into a fire tornado, a ball of air to ride, floating callouts and camera kick.
 - **The field:** cloth banners that flap in bent air and burn away from the bottom edge, charring straw and crates,
   flying boards and staves, bursting barrels, glowing lanterns, steam when a fire is doused.
+- **Sound:** procedural (no audio files), placed around the camera: whooshes, the whip's crack, splashes, steam,
+  crackling fire, wind, thuds, smashes, hits and chimes. M mutes.
 
 It is also the quickest way to try a change to the physics. The Unreal build still draws everything with basic
 shapes; its materials and Niagara effects come next.
@@ -72,6 +74,7 @@ shapes; its materials and Niagara effects come next.
 | 1 2 3 4 | Water, Earth, Fire, Air stance |
 | Left mouse, right mouse, Q, E, F | The stance's techniques (below); F is its signature move |
 | H | Show or hide the controls panel |
+| M | Sound on or off (browser) |
 
 | Stance | Left mouse | Right mouse | Q | E | F (signature) |
 |---|---|---|---|---|---|
