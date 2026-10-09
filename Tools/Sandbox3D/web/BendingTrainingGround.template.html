@@ -3,7 +3,7 @@
 <title>Bending Training Ground</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Shippori+Mincho+B1:wght@600;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Lilita+One&family=Nunito:wght@600;700;800&display=swap">
 <style>
 /* Layout: the world is the page. The 3D training ground fills the frame; dark-glass HUD panels hug its corners,
    and the move bar with its frame-data strip sits bottom centre where a fighting-game HUD would put it.
@@ -26,10 +26,10 @@
   --chi: #7fd1c4;
   --stamina: #d9c27a;
   --stance: var(--water);
-  --font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", Georgia, serif;
-  --font-ui: "Bai Jamjuree", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Lilita One", "Arial Rounded MT Bold", "Bai Jamjuree", system-ui, sans-serif;
+  --font-ui: "Nunito", "Bai Jamjuree", "Segoe UI", system-ui, sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --radius: 10px;
+  --radius: 14px;
 }
 html, body { height: 100%; }
 [hidden] { display: none !important; }
@@ -73,7 +73,7 @@ body {
 #brand h1 {
   margin: 0;
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: 400;
   font-size: 21px;
   letter-spacing: 0.02em;
   line-height: 1.15;
@@ -220,12 +220,15 @@ body {
 .float {
   position: absolute;
   transform: translate(-50%, -100%);
-  font: 600 12px var(--font-ui);
+  font: 400 15px var(--font-display);
+  letter-spacing: 0.02em;
   color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.5);
+  text-shadow: 0 2px 0 #1a120c, 2px 0 0 #1a120c, -2px 0 0 #1a120c, 0 -2px 0 #1a120c, 2px 2px 0 #1a120c, -2px 2px 0 #1a120c, 0 4px 8px rgba(0,0,0,0.45);
   white-space: nowrap;
   pointer-events: none;
 }
+.float.pop { animation: pop 0.38s cubic-bezier(.2,1.6,.4,1); }
+@keyframes pop { 0% { transform: translate(-50%, -100%) scale(0.3); } 100% { transform: translate(-50%, -100%) scale(1); } }
 
 .overlay {
   position: fixed;
@@ -248,7 +251,7 @@ body {
 .card h2 {
   margin: 0;
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: 400;
   font-size: clamp(26px, 6vw, 34px);
   line-height: 1.08;
   text-wrap: balance;
@@ -780,10 +783,10 @@ function start() {
     const hy = heights[Math.min(y + 1, SY - 1) * SX + x] - heights[Math.max(y - 1, 0) * SX + x];
     const slope = Math.sqrt(hx * hx + hy * hy) / (2 * CELL);
     const n = hash(i) * 0.05 - 0.025;
-    let r = 0.36 + n, g = 0.5 + n * 1.2, b = 0.2 + n * 0.5;                // meadow grass
+    let r = 0.33 + n, g = 0.6 + n * 1.2, b = 0.18 + n * 0.5;               // meadow grass
     const fromCenter = Math.hypot(wx, wy);
     const arena = 1 - Math.min(1, Math.max(0, (fromCenter - ARENA_R + 30) / 60));
-    if (arena > 0) { r += (0.66 - r) * arena; g += (0.57 - g) * arena; b += (0.42 - b) * arena; }   // packed sand
+    if (arena > 0) { r += (0.86 - r) * arena; g += (0.72 - g) * arena; b += (0.5 - b) * arena; }    // packed sand
     const worked = Math.abs(h - original[i]);
     if (worked > 4) {                                                     // bent soil
       const k = Math.min(1, (worked - 4) / 25);
@@ -918,17 +921,22 @@ function start() {
           vec3 R = reflect(-V, n);
           R.y = abs(R.y);
           vec3 refl = skyColor(R);
-          float depth = smoothstep(0.0, 0.9, 1.0 - dist);
-          vec3 body = mix(vec3(0.09, 0.27, 0.25), vec3(0.01, 0.06, 0.10), depth);
-          body += vec3(0.015, 0.05, 0.045) * max(dot(n, uSunDir), 0.0);
-          vec3 col = mix(body, refl, F);
+          // Toon pond: depth in bands (turquoise shallows, blue middle, deep blue centre), a little sky, crisp
+          // sparkles, and a white foam ring at the shore.
+          float depth = 1.0 - dist;
+          vec3 body = vec3(0.3, 0.82, 0.86);
+          body = mix(body, vec3(0.1, 0.52, 0.8), smoothstep(0.16, 0.2, depth));
+          body = mix(body, vec3(0.04, 0.28, 0.6), smoothstep(0.48, 0.52, depth));
+          body *= 0.82 + 0.25 * step(0.2, dot(n, uSunDir));
+          vec3 col = mix(body, refl, F * 0.45);
           float sr = max(dot(R, uSunDir), 0.0);
-          col += vec3(1.0, 0.92, 0.75) * (pow(sr, 700.0) * 14.0 + pow(sr, 60.0) * 0.25);
-          float band = smoothstep(0.8, 0.97, dist) * (1.0 - smoothstep(0.99, 1.08, dist));
-          float foam = band * smoothstep(0.5, 0.75, snoise(vec3(p * 3.5, uTime * 0.5)) * 0.5 + 0.5);
-          col = mix(col, vec3(0.8, 0.85, 0.88), foam * 0.3);
-          float alpha = mix(0.5, 0.95, depth) + F * 0.3 + foam * 0.3;
-          alpha *= 1.0 - smoothstep(1.0, 1.1, dist);
+          col += vec3(1.0) * smoothstep(0.985, 0.99, sr) * 1.6;
+          col += vec3(1.0) * step(0.86, snoise(vec3(p * 9.0, uTime * 1.5))) * smoothstep(0.6, 0.8, sr) * 0.8;
+          float band = smoothstep(0.84, 0.87, dist) * (1.0 - smoothstep(0.98, 1.01, dist));
+          float foam = band * step(0.45, snoise(vec3(p * 3.0, uTime * 0.6)) * 0.5 + 0.5);
+          col = mix(col, vec3(0.95, 0.99, 1.0), foam * 0.9);
+          float alpha = mix(0.72, 0.96, smoothstep(0.1, 0.4, depth)) + foam * 0.3;
+          alpha *= 1.0 - smoothstep(1.0, 1.06, dist);
           gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
           ${SHADER_TAIL}
         }`,
@@ -1019,55 +1027,103 @@ function start() {
     return g;
   }
 
-  // ---------------------------------------------------------------- The bender: a low-poly person
-  const skin = std(0xd9a77c), cloth = std(0x2f3b44), shirt = std(ELEMENTS[2].hex), sash = std(0xe9e3d3), hair = std(0x2b211b);
-  function part(geo, mat, sx, sy, sz, x, y, z, parent) {
+  // ---------------------------------------------------------------- Toon look: banded light, rim light, ink outlines
+  const toonRamp = (() => {
+    const d = new Uint8Array([105, 105, 105, 255, 185, 185, 185, 255, 255, 255, 255, 255]);
+    const t = new THREE.DataTexture(d, 3, 1, THREE.RGBAFormat);
+    t.minFilter = t.magFilter = THREE.NearestFilter;
+    t.needsUpdate = true;
+    return t;
+  })();
+  function toon(color, extra, rim) {
+    const m = new THREE.MeshToonMaterial(Object.assign({ color: lin(color), gradientMap: toonRamp }, extra || {}));
+    const rimStrength = rim === undefined ? 0.22 : rim;
+    m.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('gl_FragColor = vec4( outgoingLight, diffuseColor.a );',
+        `outgoingLight += vec3(1.0, 0.97, 0.9) * ${rimStrength.toFixed(3)} * pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);
+         gl_FragColor = vec4( outgoingLight, diffuseColor.a );`);
+    };
+    return m;
+  }
+  const inkMat = new THREE.MeshBasicMaterial({ color: lin(0x17120e), side: THREE.BackSide });
+  inkMat.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normal * 0.011;'); };
+  // A mesh with an ink outline (an inflated back-face shell).
+  function inked(geo, mat, parent, x, y, z) {
     const m = new THREE.Mesh(geo, mat);
-    m.scale.set(sx, sy, sz); m.position.set(x, y, z); m.castShadow = true;
+    m.position.set(x || 0, y || 0, z || 0);
+    m.castShadow = true;
+    const ink = new THREE.Mesh(geo, inkMat);
+    m.add(ink);
     parent.add(m);
     return m;
   }
-  const human = new THREE.Group();
-  const hips = new THREE.Group(); hips.position.y = 0.94; human.add(hips);
-  const torso = new THREE.Group(); hips.add(torso);
-  part(geoBox, shirt, 0.26, 0.58, 0.44, 0, 0.33, 0, torso);
-  part(geoBox, sash, 0.28, 0.08, 0.46, 0, 0.06, 0, torso);
-  const head = new THREE.Group(); head.position.y = 0.78; torso.add(head);
-  part(geoBox, skin, 0.22, 0.25, 0.21, 0, 0.0, 0, head);
-  part(geoBox, hair, 0.24, 0.08, 0.23, -0.01, 0.13, 0, head);
-  part(geoBox, hair, 0.06, 0.18, 0.22, -0.11, 0.04, 0, head);
-  const band = part(geoBox, shirt, 0.235, 0.035, 0.225, 0, 0.075, 0, head);
-  function limb(mat, length, width, x, y, z, parent) {
-    const pivot = new THREE.Group(); pivot.position.set(x, y, z); parent.add(pivot);
-    part(geoBox, mat, width, length, width, 0, -length / 2, 0, pivot);
-    return pivot;
+  // Capsule along Y with its top cap centred on the origin (a limb hanging from its joint).
+  function limbGeometry(radius, length) {
+    const pts = [], steps = 6;
+    for (let i = 0; i <= steps; i++) { const a = -Math.PI / 2 + (i / steps) * (Math.PI / 2); pts.push(new THREE.Vector2(Math.cos(a) * radius + 1e-4, -length + Math.sin(a) * radius)); }
+    for (let i = 0; i <= steps; i++) { const a = (i / steps) * (Math.PI / 2); pts.push(new THREE.Vector2(Math.cos(a) * radius + 1e-4, Math.sin(a) * radius)); }
+    const g = new THREE.LatheGeometry(pts, 12);
+    g.computeVertexNormals();
+    return g;
   }
-  const armR = limb(shirt, 0.6, 0.12, 0, 0.58, 0.29, torso);
-  const armL = limb(shirt, 0.6, 0.12, 0, 0.58, -0.29, torso);
-  part(geoBox, skin, 0.11, 0.11, 0.11, 0, -0.64, 0, armR);
-  part(geoBox, skin, 0.11, 0.11, 0.11, 0, -0.64, 0, armL);
-  const legR = limb(cloth, 0.9, 0.15, 0, 0, 0.11, hips);
-  const legL = limb(cloth, 0.9, 0.15, 0, 0, -0.11, hips);
-  part(geoBox, cloth, 0.24, 0.07, 0.15, 0.05, -0.92, 0, legR);
-  part(geoBox, cloth, 0.24, 0.07, 0.15, 0.05, -0.92, 0, legL);
+
+  // ---------------------------------------------------------------- The bender: a cartoon martial artist
+  const skin = toon(0xf0b98c), cloth = toon(0x3a3550), shirt = toon(ELEMENTS[2].hex), trim = toon(ELEMENTS[2].hex), sash = toon(0xf1e7cf), hair = toon(0x2a1d16, null, 0.1), boots = toon(0x4a3426);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: lin(0x15110e) }), shineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const human = new THREE.Group();
+  const body = new THREE.Group(); human.add(body);               // squash and stretch about the feet
+  const pelvis = new THREE.Group(); pelvis.position.y = 0.88; body.add(pelvis);
+  inked(new THREE.SphereGeometry(0.2, 16, 10).scale(0.75, 0.55, 1.0), cloth, pelvis, 0, 0.02, 0);
+  const spine = new THREE.Group(); spine.position.y = 0.04; pelvis.add(spine);
+  const tunicGeo = new THREE.LatheGeometry([[0.001, -0.02], [0.19, -0.02], [0.215, 0.07], [0.2, 0.2], [0.225, 0.4], [0.25, 0.5], [0.2, 0.58], [0.09, 0.62], [0.001, 0.63]].map(([r, y]) => new THREE.Vector2(r, y)), 16).scale(0.72, 1, 1);
+  tunicGeo.computeVertexNormals();
+  inked(tunicGeo, shirt, spine);
+  inked(new THREE.TorusGeometry(0.205, 0.035, 8, 24).rotateX(Math.PI / 2).scale(0.74, 1, 1.02), sash, spine, 0, 0.07, 0);
+  const neck = new THREE.Group(); neck.position.y = 0.62; spine.add(neck);
+  const head = new THREE.Group(); head.position.y = 0.17; neck.add(head);
+  inked(new THREE.SphereGeometry(0.17, 22, 16).scale(0.95, 1.04, 1.0), skin, head);
+  inked(new THREE.SphereGeometry(0.182, 22, 12, 0, Math.PI * 2, 0, Math.PI * 0.52).rotateZ(0.42), hair, head, -0.015, 0.012, 0);
+  inked(new THREE.SphereGeometry(0.06, 12, 10), hair, head, -0.13, 0.13, 0);
+  const band = inked(new THREE.TorusGeometry(0.168, 0.02, 6, 28).rotateX(Math.PI / 2).rotateZ(0.32), trim, head, 0, 0.05, 0);
+  const eyes = new THREE.Group(); head.add(eyes);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8).scale(0.55, 1.25, 1), eyeMat); eye.position.set(0.152, 0.01, side * 0.058); eyes.add(eye);
+    const shine = new THREE.Mesh(new THREE.SphereGeometry(0.007, 6, 5), shineMat); shine.position.set(0.164, 0.022, side * 0.054); eyes.add(shine);
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.045), eyeMat); brow.position.set(0.155, 0.06, side * 0.06); brow.rotation.x = side * 0.18; head.add(brow);
+  }
+  function arm(z) {
+    const shoulder = new THREE.Group(); shoulder.position.set(0, 0.52, z); spine.add(shoulder);
+    inked(limbGeometry(0.06, 0.26), shirt, shoulder);
+    const elbow = new THREE.Group(); elbow.position.y = -0.28; shoulder.add(elbow);
+    inked(limbGeometry(0.053, 0.22), skin, elbow);
+    inked(new THREE.TorusGeometry(0.056, 0.016, 6, 16).rotateX(Math.PI / 2), trim, elbow, 0, -0.17, 0);
+    const hand = inked(new THREE.SphereGeometry(0.062, 12, 10).scale(1, 1.1, 0.85), skin, elbow, 0, -0.28, 0);
+    return { shoulder, elbow, hand };
+  }
+  const armR = arm(0.27), armL = arm(-0.27);
+  function leg(z) {
+    const hip = new THREE.Group(); hip.position.set(0, -0.02, z); pelvis.add(hip);
+    inked(limbGeometry(0.085, 0.33), cloth, hip);
+    const knee = new THREE.Group(); knee.position.y = -0.39; hip.add(knee);
+    inked(limbGeometry(0.074, 0.31), cloth, knee);
+    const ankle = new THREE.Group(); ankle.position.y = -0.38; knee.add(ankle);
+    inked(roundedBox(0.25, 0.09, 0.14, 0.04, 2), boots, ankle, 0.05, -0.045, 0);
+    return { hip, knee, ankle };
+  }
+  const legR = leg(0.105), legL = leg(-0.105);
   scene.add(human);
 
   const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpM = new THREE.Matrix4(), tmpS = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0), ZERO_SCALE = new THREE.Vector3(0, 0, 0);
-  // Arm pivot orientation that points the arm (which hangs along -Y) toward a local direction.
-  function aimArm(pivot, localDir, blend) {
-    tmpQ.setFromUnitVectors(DOWN, localDir);
-    pivot.quaternion.slerp(tmpQ, blend);
-  }
 
   // ---------------------------------------------------------------- Bodies (props, thrown rocks)
   const bodyMeshes = new Map();
-  const stoneMats = [0xdedbd3, 0xc9c6bf, 0xb6b3ad].map((c) => new THREE.MeshStandardMaterial({ map: rockTex, color: lin(c), roughness: 0.9, flatShading: true }));
-  const earthRockMat = new THREE.MeshStandardMaterial({ map: soilTex, color: lin(0xd8c4a8), roughness: 0.95, flatShading: true });
-  const strawMat = new THREE.MeshStandardMaterial({ map: strawTex, roughness: 0.95 });
-  const woodMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.8 });
-  const ropeMat = new THREE.MeshStandardMaterial({ color: lin(0x5a4330), roughness: 0.9 });
-  const pedestalMat = new THREE.MeshStandardMaterial({ map: rockTex, color: lin(0xb9b4aa), roughness: 0.85 });
+  const stoneMats = [0xd6dbe0, 0xc4cad1, 0xb2b9c2].map((c) => toon(c, { map: rockTex }, 0.18));
+  const earthRockMat = toon(0xe2c29a, { map: soilTex }, 0.15);
+  const strawMat = toon(0xfff0c8, { map: strawTex });
+  const woodMat = toon(0xffffff, { map: woodTex }, 0.12);
+  const ropeMat = toon(0x6b4a2e);
+  const pedestalMat = toon(0xc8c6d0, { map: rockTex }, 0.16);
   const bronzeMat = new THREE.MeshStandardMaterial({ color: lin(0x8a6a3e), roughness: 0.42, metalness: 0.75 });
   const iceMat = new THREE.MeshStandardMaterial({ color: lin(0xcdeefa), roughness: 0.05, metalness: 0, transparent: true, opacity: 0.62, envMapIntensity: 2.2 });
   const iceCoreMat = new THREE.MeshStandardMaterial({ color: lin(0xf2fbff), roughness: 0.6, transparent: true, opacity: 0.35, depthWrite: false });
@@ -1309,10 +1365,10 @@ function start() {
 
   // ---------------------------------------------------------------- Droplets: spray, drips, splashes
   const DROPS = 1500;
-  const dropMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: lin(0xffffff), roughness: 0.02, metalness: 0, transparent: true, opacity: 0.55, envMapIntensity: 1.3 }), DROPS);
+  const dropMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshToonMaterial({ color: lin(0xffffff), gradientMap: toonRamp, transparent: true, opacity: 0.9 }), DROPS);
   dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   dropMesh.frustumCulled = false;
-  const dropWater = lin(0x5fa9cf), dropMud = lin(0x6b4a30), dropColor = new THREE.Color();
+  const dropWater = lin(0x6fd2f5), dropMud = lin(0x7a5532), dropColor = new THREE.Color();
   for (let i = 0; i < DROPS; i++) { tmpM.compose(tmpV.set(0, -999, 0), tmpQ.identity(), ZERO_SCALE); dropMesh.setMatrixAt(i, tmpM); dropMesh.setColorAt(i, dropWater); }
   scene.add(dropMesh);
   const dP = new Float32Array(DROPS * 3), dV = new Float32Array(DROPS * 3), dL = new Float32Array(DROPS), dSize = new Float32Array(DROPS), dDrag = new Float32Array(DROPS);
@@ -1459,23 +1515,25 @@ function start() {
         vec3 col;
         float alpha;
         if (vIce < 0.5) {
-          // Light through the stream: turquoise where it is thin to the eye, deep blue-green through the core.
-          vec3 body = mix(vec3(0.1, 0.42, 0.55), vec3(0.008, 0.07, 0.14), pow(ndv, 0.6));
-          body += vec3(0.22, 0.55, 0.5) * pow(max(dot(-V, uSunDir), 0.0), 6.0) * 0.9;
-          body *= 0.55 + 0.6 * max(dot(n, uSunDir), 0.0);
-          col = mix(body, refl, F);
-          col += vec3(1.0, 0.94, 0.8) * (pow(sr, 380.0) * 16.0 + pow(sr, 36.0) * 0.32);
+          // Toon water: cyan rim, deep blue core, two-tone light, a bright Fresnel edge, crisp highlights.
+          float core = smoothstep(0.42, 0.5, pow(ndv, 0.7));
+          vec3 body = mix(vec3(0.22, 0.78, 0.98), vec3(0.03, 0.34, 0.78), core);
+          body *= 0.78 + 0.32 * step(0.15, dot(n, uSunDir));
+          col = mix(body, vec3(0.82, 0.97, 1.0), smoothstep(0.5, 0.56, F + 0.4 * (1.0 - ndv)));
+          col += vec3(1.0) * smoothstep(0.9, 0.93, sr) * 1.4;
+          col += vec3(0.6, 0.9, 1.0) * smoothstep(0.7, 0.75, sr) * 0.25;
           // White water where the stream moves fast.
-          float rush = clamp((vInfo.w - 6.0) / 16.0, 0.0, 1.0);
-          float foam = smoothstep(0.5, 0.85, snoise(vec3(vInfo.x * 70.0 - flow * 7.0, vInfo.y * 3.0, uTime)) * 0.5 + 0.5) * rush;
-          col = mix(col, vec3(0.92, 0.96, 1.0), foam * 0.45);
-          alpha = mix(0.84, 1.0, F) + foam * 0.15;
+          float rush = clamp((vInfo.w - 5.0) / 14.0, 0.0, 1.0);
+          float foam = smoothstep(0.55, 0.62, snoise(vec3(vInfo.x * 60.0 - flow * 7.0, vInfo.y * 3.0, uTime)) * 0.5 + 0.5) * rush;
+          col = mix(col, vec3(0.95, 0.99, 1.0), foam * 0.85);
+          alpha = 0.93;
         } else {
-          vec3 iceBody = mix(vec3(0.5, 0.74, 0.84), vec3(0.86, 0.95, 1.0), 1.0 - ndv);
-          iceBody *= 0.6 + 0.6 * max(dot(n, uSunDir), 0.0);
-          col = mix(iceBody, refl, F * 0.8) + vec3(1.0) * pow(sr, 140.0) * 5.0;
-          col += vec3(0.5) * (1.0 - smoothstep(0.0, 0.06, abs(snoise(vW * 5.0))));
-          alpha = 0.92;
+          // Toon ice: pale blue facets, white edges and cracks.
+          vec3 iceBody = mix(vec3(0.62, 0.86, 0.97), vec3(0.9, 0.98, 1.0), step(0.55, 1.0 - ndv));
+          iceBody *= 0.8 + 0.3 * step(0.1, dot(n, uSunDir));
+          col = iceBody + vec3(1.0) * smoothstep(0.86, 0.9, sr) * 1.2;
+          col += vec3(0.6) * (1.0 - smoothstep(0.0, 0.05, abs(snoise(vW * 5.0))));
+          alpha = 0.95;
         }
         gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
         ${SHADER_TAIL}
@@ -1625,10 +1683,10 @@ function start() {
     g.computeVertexNormals();
     return g;
   }
-  const leafMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true });
-  const barkMat = new THREE.MeshStandardMaterial({ map: woodTex, color: lin(0x8a7a6a), roughness: 0.95 });
-  const coniferLayers = [0, 1, 2].map((i) => leafGeometry(new THREE.ConeGeometry(1.35 - i * 0.33, 1.7 - i * 0.2, 9, 1).translate(0, 1.3 + i * 0.95, 0), lin(0x2c5531), 0.35, i * 31));
-  const broadLeaves = [0, 1, 2, 3].map((i) => leafGeometry(new THREE.IcosahedronGeometry(1, 1), lin(0x4d7634), 0.4, 100 + i * 17));
+  const leafMat = toon(0xffffff, { vertexColors: true }, 0.2);
+  const barkMat = toon(0x9a7a5c, { map: woodTex }, 0.1);
+  const coniferLayers = [0, 1, 2].map((i) => leafGeometry(new THREE.ConeGeometry(1.35 - i * 0.33, 1.7 - i * 0.2, 9, 1).translate(0, 1.3 + i * 0.95, 0), lin(0x2f7a3e), 0.3, i * 31));
+  const broadLeaves = [0, 1, 2, 3].map((i) => leafGeometry(new THREE.IcosahedronGeometry(1, 1), lin(0x5fa83c), 0.35, 100 + i * 17));
   const trunkGeo = new THREE.CylinderGeometry(0.1, 0.16, 1.9, 7).translate(0, 0.95, 0);
   function tree(kind, seed) {
     const g = new THREE.Group();
@@ -1722,7 +1780,7 @@ function start() {
       tuftXY[i * 2] = x; tuftXY[i * 2 + 1] = y;
       tuftScale[i] = 0.7 + rand() * 0.8;
       tuftYaw[i] = rand() * Math.PI * 2;
-      tufts.setColorAt(i, c.copy(lin(0x8fac52)).multiplyScalar(0.8 + rand() * 0.4));
+      tufts.setColorAt(i, c.copy(lin(0x92c24e)).multiplyScalar(0.8 + rand() * 0.4));
       placeTuft(i);
       const key = bucketKey(x, y);
       if (!tuftBuckets.has(key)) tuftBuckets.set(key, []);
@@ -1833,6 +1891,9 @@ function start() {
     let f = floats.find((e) => e.life <= 0);
     if (!f) { if (floats.length > 10) return; f = { el: document.createElement('div') }; f.el.className = 'float'; hud.appendChild(f.el); floats.push(f); }
     f.el.textContent = text;
+    f.el.classList.remove('pop');
+    void f.el.offsetWidth;
+    f.el.classList.add('pop');
     f.pos = new THREE.Vector3(x, y, z);
     f.life = 1.4;
     f.el.style.display = '';
@@ -1920,7 +1981,8 @@ function start() {
       const pad = document.querySelector(`.pad[data-slot="${slot}"]`);
       if (pad) pad.textContent = t ? (SHORT_NAMES[t.name] || t.name) : '—';
     });
-    shirt.color.copy(lin(ELEMENTS[element].hex));
+    shirt.color.copy(lin(ELEMENTS[element].hex)).multiplyScalar(0.78);
+    trim.color.copy(lin(ELEMENTS[element].hex));
     const hex = ELEMENTS[element].hex;
     aimMarker.material.color.copy(lin(hex));
     wallGuide.material.color.copy(lin(hex));
@@ -2206,43 +2268,201 @@ function start() {
     renderer.render(scene, camera);
   }
 
+  // ---------------------------------------------------------------- Bender animation: springs toward poses
+  // Every joint eases toward a target pose. Targets come from what the simulation reports: speed, ground, the
+  // stance, and the current move's phase (startup = wind-up, active = the strike, recovery = follow-through).
+  const anim = { land: 0, wasGrounded: true, fallSpeed: 0, blinkT: 2.5, hop: 0, lastElement: -1, punchSide: 1, lastMove: 0, lastPhase: 0 };
+  const springs = {};
+  function spring(name, target, rate, dt) {
+    const c = springs[name] === undefined ? target : springs[name];
+    const v = c + (target - c) * (1 - Math.exp(-dt * rate));
+    springs[name] = v;
+    return v;
+  }
+  const qTmp = new THREE.Quaternion(), mTmp = new THREE.Matrix4(), xAxis = new THREE.Vector3(), yAxis = new THREE.Vector3(), zAxis = new THREE.Vector3();
+  const FORWARD = new THREE.Vector3(1, 0, 0);
+  // Point an arm's upper segment along dir (torso space) and bend the elbow forward by bend (rad).
+  function poseArm(a, name, dir, bend, rate, dt) {
+    yAxis.copy(dir).normalize().negate();
+    const hint = Math.abs(yAxis.x) > 0.85 ? UP : FORWARD;
+    xAxis.copy(hint).addScaledVector(yAxis, -hint.dot(yAxis)).normalize();
+    zAxis.crossVectors(xAxis, yAxis);
+    mTmp.makeBasis(xAxis, yAxis, zAxis);
+    qTmp.setFromRotationMatrix(mTmp);
+    a.shoulder.quaternion.slerp(qTmp, 1 - Math.exp(-dt * rate));
+    a.elbow.rotation.z = spring(name + 'e', bend, rate, dt);
+  }
+  // Hip pitch (forward +), stance width (outward +), knee bend (+); the foot stays level.
+  function poseLeg(l, name, side, pitch, spread, kneeBend, rate, dt) {
+    const p = spring(name + 'p', pitch, rate, dt), s = spring(name + 's', spread, rate, dt), k = spring(name + 'k', kneeBend, rate, dt);
+    l.hip.rotation.set(-side * s, 0, p);
+    l.knee.rotation.z = -k;
+    l.ankle.rotation.z = k - p;
+    return 0.39 * Math.cos(p) + 0.38 * Math.cos(p - k);
+  }
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const ELEMENT_POP = { 2: 0x66c8ff, 1: 0x9ccf5b, 3: 0xff7a3a, 4: 0xffd36a };
   function updateHuman(dt) {
     toThree(P.x, P.y, P.z, human.position);
     human.rotation.y = player[3];
+    const t = uTime.value;
     const speed = Math.hypot(player[4], player[5]) / 100;
+    const vz = player[6] / 100;
     const grounded = player[7] > 0;
     const stride = player[25];
-    const swing = grounded ? Math.min(speed / 5, 1.2) * 0.75 : 0;
-    const k = 1 - Math.exp(-dt * 14);
-    const legTarget = grounded ? Math.sin(stride) * swing : 0.55;
-    legR.rotation.z += (legTarget - legR.rotation.z) * k;
-    legL.rotation.z += ((grounded ? -Math.sin(stride) * swing : -0.35) - legL.rotation.z) * k;
-    hips.position.y = 0.94 + (grounded ? Math.abs(Math.cos(stride)) * 0.04 * Math.min(speed / 5, 1) : 0.05);
-    torso.rotation.z += ((grounded ? -Math.min(speed / 8, 1) * 0.12 : -0.08) - torso.rotation.z) * k;
+    const element = player[8] | 0, move = player[9] | 0, phase = player[10] | 0, progress = player[11], hold = player[12] | 0;
+    const whip = player[36] > 0;
+    const run = Math.min(speed / 6, 1.3);
+    const R = 16;
 
-    // Casting pose from the move's frame data: startup draws back, active strikes toward the aim.
-    const phase = player[10] | 0, hold = player[12] | 0, whip = player[36] > 0;
-    const element = player[8] | 0;
-    toThree(player[18], player[19], player[20], tmpV);           // aim, world
-    human.updateMatrixWorld();
-    const casting = phase === 1 || phase === 2 || hold > 0 || whip;
-    if (casting) {
-      armR.parent.updateMatrixWorld();
-      tmpV2.setFromMatrixPosition(armR.matrixWorld);
-      tmpV.sub(tmpV2).normalize();
-      tmpQ.copy(armR.parent.getWorldQuaternion(new THREE.Quaternion())).invert();
-      tmpV.applyQuaternion(tmpQ);                                  // aim direction in torso space
-      if (phase === 1) { tmpV2.set(-0.55, -0.6, 0.35).normalize(); aimArm(armR, tmpV2, k); }
-      else aimArm(armR, tmpV, Math.min(1, k * 1.6));
-      const both = element === 1 || element === 4 || hold > 0;
-      if (both) { tmpV2.copy(tmpV); tmpV2.z -= 0.35; tmpV2.normalize(); aimArm(armL, tmpV2, k); }
-      else { tmpV2.set(0.45, -0.75, -0.25).normalize(); aimArm(armL, tmpV2, k); }
-    } else {
-      tmpQ.setFromEuler(new THREE.Euler(0, 0, -Math.sin(stride) * swing * 0.8));
-      armR.quaternion.slerp(tmpQ, k);
-      tmpQ.setFromEuler(new THREE.Euler(0, 0, Math.sin(stride) * swing * 0.8));
-      armL.quaternion.slerp(tmpQ, k);
+    // Landing squash, stance-switch hop, blinking.
+    if (grounded && !anim.wasGrounded && anim.fallSpeed < -2.5) anim.land = Math.min(1, -anim.fallSpeed / 9);
+    anim.wasGrounded = grounded;
+    anim.fallSpeed = vz;
+    anim.land *= Math.exp(-dt * 9);
+    if (element !== anim.lastElement) {
+      if (anim.lastElement >= 0) {
+        anim.hop = 1;
+        for (let i = 0; i < 26; i++) { const a = (i / 26) * Math.PI * 2; emit(human.position.x + Math.cos(a) * 0.5, human.position.y + 0.2 + Math.random() * 1.4, human.position.z + Math.sin(a) * 0.5, 1, ELEMENT_POP[element] || 0xffffff, 1.2, 1.2, -0.5, 0.7); }
+      }
+      anim.lastElement = element;
     }
+    anim.hop *= Math.exp(-dt * 6);
+    anim.blinkT -= dt;
+    if (anim.blinkT < -0.12) anim.blinkT = 2 + Math.random() * 3;
+    eyes.scale.y = anim.blinkT < 0 ? 0.15 : 1;
+    if (move !== anim.lastMove || (phase === 1 && anim.lastPhase !== 1)) anim.punchSide = -anim.punchSide;
+    anim.lastMove = move; anim.lastPhase = phase;
+
+    // Squash and stretch about the feet.
+    const stretch = grounded ? 0 : Math.max(-0.08, Math.min(0.1, vz * 0.02));
+    const sq = anim.land * 0.22;
+    body.scale.set(1 + sq * 0.5 - stretch * 0.4, 1 - sq + stretch + anim.hop * 0.08 * Math.sin(anim.hop * 12), 1 + sq * 0.5 - stretch * 0.4);
+
+    // The pose this frame: idle stance per element, blended with running, overridden by techniques.
+    const name = (techById[hold] || techById[move] || {}).name || '';
+    const casting = phase === 1 || phase === 2 || phase === 3 || hold > 0;
+    let lean = -0.08 * run, twist = 0, crouch = 0, lunge = 0;
+    let rDir, rBend, lDir, lBend;
+    let rp = 0, lp = 0, spreadR = 0.04, spreadL = 0.04, kneeR = 0.12, kneeL = 0.12;
+
+    // Idle stances.
+    const breathe = Math.sin(t * 1.8) * 0.02;
+    if (element === 3) { rDir = V(0.55, -0.72, 0.28); rBend = 2.15; lDir = V(0.6, -0.7, -0.25); lBend = 2.25; crouch = 0.06 + Math.abs(Math.sin(t * 5)) * 0.015; spreadR = spreadL = 0.1; kneeR = kneeL = 0.3; }
+    else if (element === 1) { rDir = V(0.35, -0.88, 0.38); rBend = 1.3; lDir = V(0.35, -0.88, -0.38); lBend = 1.3; crouch = 0.12; spreadR = spreadL = 0.24; kneeR = kneeL = 0.5; }
+    else if (element === 4) { rDir = V(0.2 + Math.sin(t * 1.3) * 0.08, -0.95, 0.32); rBend = 0.45; lDir = V(0.2 - Math.sin(t * 1.3) * 0.08, -0.95, -0.32); lBend = 0.45; crouch = -0.01 + Math.abs(Math.sin(t * 2.6)) * 0.02; }
+    else { rDir = V(0.55 + Math.sin(t * 1.6) * 0.12, -0.6 + Math.cos(t * 1.6) * 0.1, 0.36); rBend = 0.7; lDir = V(0.55 - Math.sin(t * 1.6 + 1) * 0.12, -0.62, -0.36 + Math.cos(t * 1.6) * 0.06); lBend = 0.75; crouch = 0.05; kneeR = kneeL = 0.22; }
+
+    // Running: legs and arms swing with the stride, the body leans in.
+    if (grounded && run > 0.05) {
+      const sw = Math.sin(stride);
+      rp = sw * 0.75 * run; lp = -sw * 0.75 * run;
+      kneeR = 0.15 + Math.max(0, -Math.cos(stride)) * 1.1 * run + Math.max(0, sw) * 0.2;
+      kneeL = 0.15 + Math.max(0, Math.cos(stride)) * 1.1 * run + Math.max(0, -sw) * 0.2;
+      spreadR = spreadL = 0.03;
+      crouch = 0.02;
+      if (!casting && !whip) { rDir = V(-sw * 0.7, -0.75, 0.25); rBend = 1.3; lDir = V(sw * 0.7, -0.75, -0.25); lBend = 1.3; }
+    }
+    if (!grounded) {
+      const rising = vz > 0;
+      rp = rising ? 0.7 : 0.25; lp = rising ? 0.2 : -0.1; kneeR = rising ? 1.4 : 0.5; kneeL = rising ? 0.9 : 0.3;
+      if (!casting) { rDir = V(0.2, 0.3, 0.8); rBend = 0.6; lDir = V(0.2, 0.3, -0.8); lBend = 0.6; }
+    }
+
+    // Holding a whip: the right hand reaches to where the water starts.
+    const shoulderWorld = (a) => { a.shoulder.updateMatrixWorld(); return tmpV2.setFromMatrixPosition(a.shoulder.matrixWorld); };
+    const toTorso = (worldDir) => { spine.updateMatrixWorld(); spine.getWorldQuaternion(qTmp); return worldDir.applyQuaternion(qTmp.invert()); };
+    human.updateMatrixWorld();
+    if (whip && !casting) {
+      toThree(player[22], player[23], player[24], tmpV3);
+      rDir = toTorso(tmpV3.sub(shoulderWorld(armR)).normalize()).clone();
+      rBend = 0.3;
+    }
+
+    // Techniques: wind-up, strike, follow-through.
+    if (casting) {
+      toThree(player[18], player[19], player[20], tmpV3);
+      const aim = toTorso(tmpV3.sub(shoulderWorld(armR)).normalize()).clone();
+      const aimL = aim.clone(); aimL.z -= 0.3; aimL.normalize();
+      const aimR = aim.clone(); aimR.z += 0.3; aimR.normalize();
+      const wind = phase === 1, strike = phase === 2 || hold > 0, follow = phase === 3;
+      const ease = wind ? progress * progress : 1;
+      const side = anim.punchSide;
+      switch (name) {
+        case 'Water Whip':
+          if (wind) { rDir = V(-0.35, 0.85, 0.45); rBend = 0.5; twist = -0.45 * ease; lean = 0.05; }
+          else if (strike) { rDir = aim; rBend = 0.05; twist = 0.4; lunge = 0.08; lDir = V(-0.3, -0.8, -0.4); lBend = 0.5; }
+          else { rDir = V(0.4, -0.5, 0.6); rBend = 0.4; twist = 0.2 * (1 - progress); }
+          break;
+        case 'Freeze / Thaw':
+          rDir = V(0.75, -0.25, 0.15); rBend = 1.6; lDir = V(0.75, -0.25, -0.15); lBend = 1.6; crouch = 0.08; lean = 0.08;
+          break;
+        case 'Release':
+          rDir = V(0.4, -0.9, 0.35); rBend = 0.1; lDir = V(0.4, -0.9, -0.35); lBend = 0.1; crouch = 0.1;
+          break;
+        case 'Water Blast': case 'Air Blast':
+          if (wind) { rDir = V(-0.2, -0.6, 0.6); rBend = 1.7; lDir = V(-0.2, -0.6, -0.6); lBend = 1.7; twist = -0.2; crouch = 0.12 * ease; }
+          else { rDir = aimR; rBend = 0.05; lDir = aimL; lBend = 0.05; lunge = 0.14; lean = -0.15; crouch = 0.08; }
+          break;
+        case 'Rock Throw':
+          if (wind) { rDir = V(0.55, -0.2 + 0.9 * ease, 0.45); rBend = 0.5; lDir = V(0.55, -0.2 + 0.9 * ease, -0.45); lBend = 0.5; crouch = 0.22 * (1 - ease) + 0.05; }
+          else { rDir = aimR; rBend = 0.02; lDir = aimL; lBend = 0.02; lunge = 0.2; lean = -0.2; rp = 0.5; kneeR = 0.7; lp = -0.35; }
+          break;
+        case 'Earth Wall':
+          if (wind) { rp = 0.9 * ease; kneeR = 1.6 * ease; rDir = V(0.3, -0.9, 0.5); rBend = 1.5; lDir = V(0.3, -0.9, -0.5); lBend = 1.5; }
+          else { rp = 0.25; kneeR = 0.6; crouch = 0.2; spreadR = spreadL = 0.3; rDir = V(0.6, 0.7, 0.35); rBend = 0.3; lDir = V(0.6, 0.7, -0.35); lBend = 0.3; }
+          break;
+        case 'Raise Ground':
+          crouch = 0.18; spreadR = spreadL = 0.3; kneeR = kneeL = 0.75;
+          rDir = V(0.55, 0.55 + Math.sin(t * 16) * 0.05, 0.4); rBend = 0.5; lDir = V(0.55, 0.55 + Math.cos(t * 16) * 0.05, -0.4); lBend = 0.5;
+          break;
+        case 'Lower Ground':
+          crouch = 0.22; spreadR = spreadL = 0.3; kneeR = kneeL = 0.85; lean = -0.15;
+          rDir = V(0.7, -0.7, 0.3); rBend = 0.1; lDir = V(0.7, -0.7, -0.3); lBend = 0.1;
+          break;
+        case 'Fire Blast': {
+          if (wind) {
+            if (side > 0) { rDir = V(-0.45, -0.8, 0.25); rBend = 2.0; } else { lDir = V(-0.45, -0.8, -0.25); lBend = 2.0; }
+            twist = -0.35 * side * ease; crouch = 0.1;
+          } else if (strike) {
+            if (side > 0) { rDir = aimR; rBend = 0.0; } else { lDir = aimL; lBend = 0.0; }
+            twist = 0.55 * side; lunge = 0.16; lean = -0.12; crouch = 0.1;
+            if (side > 0) { rp = 0.45; kneeR = 0.55; lp = -0.3; } else { lp = 0.45; kneeL = 0.55; rp = -0.3; }
+          } else { twist = 0.3 * side * (1 - progress); }
+          break;
+        }
+        case 'Flame Stream': case 'Gust':
+          rDir = aimR; rBend = 0.05; lDir = aimL; lBend = 0.05; crouch = 0.12; lean = -0.1; lunge = 0.06;
+          if (name === 'Gust') { rDir = V(aim.x, aim.y + Math.sin(t * 8) * 0.3, aim.z + 0.3 + Math.cos(t * 8) * 0.3).normalize(); }
+          spreadR = spreadL = 0.18; kneeR = kneeL = 0.45;
+          break;
+        case 'Ground Flame':
+          rDir = V(aim.x, Math.min(aim.y, -0.4), aim.z + 0.2).normalize(); rBend = 0.05; crouch = 0.1;
+          break;
+        case 'Air Jump':
+          if (wind) { crouch = 0.25 * ease; rDir = V(-0.3, -0.9, 0.5); lDir = V(-0.3, -0.9, -0.5); rBend = lBend = 0.4; }
+          else { rDir = V(0.2, 0.9, 0.5); lDir = V(0.2, 0.9, -0.5); rBend = lBend = 0.2; }
+          break;
+        default:
+          if (strike) { rDir = aimR; rBend = 0.1; }
+          break;
+      }
+    }
+
+    // Apply: torso, legs (the longer leg carries the pelvis), arms, head looking where you aim.
+    spine.rotation.y = spring('twist', twist, R, dt);
+    spine.rotation.z = spring('lean', lean + breathe * 0.2, 10, dt);
+    pelvis.position.x = spring('lunge', lunge, R, dt);
+    // Crouching flexes the hips forward and bends the knees twice as far, so the feet stay under the body.
+    const cr = spring('cr', crouch, 12, dt);
+    const hR = poseLeg(legR, 'lr', 1, rp + cr * 1.6, spreadR, kneeR + cr * 3.2, R, dt);
+    const hL = poseLeg(legL, 'll', -1, lp + cr * 1.6, spreadL, kneeL + cr * 3.2, R, dt);
+    const bob = grounded ? Math.abs(Math.cos(stride)) * 0.05 * run : 0;
+    pelvis.position.y = Math.max(hR, hL) * Math.cos(Math.max(spreadR, spreadL)) + 0.11 + bob - anim.land * 0.1;
+    poseArm(armR, 'ar', rDir, rBend, casting ? 26 : 12, dt);
+    poseArm(armL, 'al', lDir, lBend, casting ? 26 : 12, dt);
+    neck.rotation.y = spring('look', -twist * 0.6, 10, dt);
+    neck.rotation.z = spring('nod', casting ? 0.08 : 0.0, 10, dt) + breathe;
   }
 
   function updateBodies(t) {
