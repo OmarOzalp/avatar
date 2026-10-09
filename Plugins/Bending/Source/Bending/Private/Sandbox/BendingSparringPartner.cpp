@@ -45,6 +45,8 @@ namespace
 	constexpr double PartnerLookAheadCm = 60.0;
 	/** Feet this close above the ground still stand on it (and snap down to it walking downhill). */
 	constexpr double PartnerGroundToleranceCm = 8.0;
+	/** A move blocked by a solid prop stops this far short of it. */
+	constexpr double PartnerSweepPullBackCm = 1.0;
 	/** Knocked flying faster than this, it has no footing to steer with. */
 	constexpr double PartnerMaxSteerSpeedCmS = 1200.0;
 	/** Knocked down, it lies this far over (rad). */
@@ -392,6 +394,7 @@ void ABendingSparringPartner::TickMovement(const FVector& DesiredCmS, bool bCont
 
 	// Solid props (braziers, lanterns, banner poles, straw) stop it, knee to head; the ground is the terrain's height.
 	const FVector FlatStep(Step.X, Step.Y, 0.0);
+	bool bHitSolid = false;
 	if (!FlatStep.IsNearlyZero())
 	{
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(BendingSparringPartnerMove), false, this);
@@ -404,20 +407,28 @@ void ABendingSparringPartner::TickMovement(const FVector& DesiredCmS, bool bCont
 		if (World->SweepSingleByObjectType(Hit, From, From + FlatStep, FQuat::Identity, FCollisionObjectQueryParams(ECC_WorldStatic),
 			FCollisionShape::MakeCapsule(static_cast<float>(BodyRadiusCm - 4.0), 50.f), Params) && !Hit.bStartPenetrating)
 		{
-			Step.X = FlatStep.X * Hit.Time;
-			Step.Y = FlatStep.Y * Hit.Time;
+			bHitSolid = true;
+			// Stops just short of the contact (as the engine's own moves pull back), so the next sweep does not start
+			// inside the prop, which would be ignored and let it walk through.
+			const double StepCm = FlatStep.Size();
+			const double Fraction = FMath::Max(Hit.Time * StepCm - PartnerSweepPullBackCm, 0.0) / StepCm;
+			Step.X = FlatStep.X * Fraction;
+			Step.Y = FlatStep.Y * Fraction;
 			const FVector WallNormal = FVector(Hit.ImpactNormal.X, Hit.ImpactNormal.Y, 0.0).GetSafeNormal();
 			const double Into = FVector::DotProduct(VelocityCmS, WallNormal);
 			if (Into < 0.0)
 			{
 				VelocityCmS -= WallNormal * Into;
 			}
-			if (bControl && !DesiredCmS.IsNearlyZero())
+			// It turns the other way once per contact, then slides along the prop (turning every frame of the contact
+			// would flip its circling back and forth and pin it there).
+			if (bControl && !DesiredCmS.IsNearlyZero() && !bTouchingSolid)
 			{
 				Brain.OnBlocked();
 			}
 		}
 	}
+	bTouchingSolid = bHitSolid;
 	Center += Step;
 
 	// Flung off the field: it lies at the edge, out, until it gets up.
@@ -745,10 +756,12 @@ bool ABendingSparringPartner::HasClearShot(const FVector& FeetCm, const APawn* P
 	{
 		return true;
 	}
+	// Only solid props count, as in the browser build: flames in flight, the arena's own meshes (pond water, steam) and
+	// the player start never hold its fire.
 	for (const FHitResult& Blocking : Hits)
 	{
 		const ABendingPropActor* Prop = Cast<ABendingPropActor>(Blocking.GetActor());
-		if (!Prop || !Prop->IsThrownRock())
+		if (Prop && !Prop->IsThrownRock())
 		{
 			return false;
 		}

@@ -224,5 +224,7 @@ private:
 	/** 0 standing, 1 lying on the ground. */
 	float DownWeight = 0.f;
 	bool bOnGround = true;
+	/** Its last move ran into a solid prop (it turns the other way once per contact). */
+	bool bTouchingSolid = false;
 	bool bInitialized = false;
 };
