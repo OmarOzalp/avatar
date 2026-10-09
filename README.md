@@ -12,7 +12,9 @@ Bending is real physics with martial-arts timing:
 A third-person sandbox: walk around a training arena in a small valley, with two ponds, rocks, boulders, straw
 dummies, braziers and blocks of ice, and bend all four elements with five techniques each. The ground is deformable,
 the water whip is a simulated stream of water, water puts out fire, and everything you throw interacts through the
-same physics kernel.
+same physics kernel. The field reacts: banners, straw, crates and dummies burn (and fire spreads between them),
+lanterns light, crates smash and water barrels burst, and training dummies take damage, get knocked out and stand up
+again. Eight training goals walk a new player through it.
 
 ### In Unreal Engine 5.8
 
@@ -27,7 +29,8 @@ same physics kernel.
 There are no assets to create. The project starts on an empty engine map, and `AAvatarGameMode` builds the arena
 from code when the level starts: the terrain, ponds, props and lighting. The character, props and effects are made of
 engine basic shapes, and the HUD is drawn on the canvas. It plays the same techniques as the browser build, but it
-looks much plainer: the cartoon look, shaders and particle effects exist only in the browser build so far.
+looks much plainer: the cartoon look, shaders and particle effects exist only in the browser build so far. The
+interactive field and dummy health work in both.
 
 > The Unreal code has not been compiled yet: the environment it was written in has no engine. Expect a short round
 > of fixes on the first build. See [First build](docs/ARCHITECTURE.md#first-build) for the parts most likely to need them.
@@ -41,7 +44,11 @@ Tools/Sandbox3D/build_web.sh     # writes Tools/Sandbox3D/build/BendingTrainingG
 The browser build is the same arena and techniques, running the same C++ kernel compiled to WebAssembly, and it is
 where the look is developed first. It is a bright, cel-shaded cartoon:
 - **Bender:** a cartoon character with ink outlines and bouncy, spring-driven animation: a pose for every technique,
-  squash on landing, a hop when you switch stance.
+  squash on landing, a hop when you switch stance. Switching stance changes into that nation's clothes: a Water
+  Tribe parka with fur trim, Earth Kingdom green and tan, Fire Nation red and gold with shoulder guards, or Air Nomad
+  robes with the blue arrow.
+- **Fights:** damage numbers, health bars, a hit flash, hit-stop and camera kick on heavy blows, a combo counter and
+  K.O. callouts.
 - **Arena:** toon grass and a sand arena ringed by stone, banners in the four elements' colours, lanterns, trees and
   a sky with drifting clouds.
 - **Water:** a glossy, rippling whip with foam, droplets and splashes; ponds with waves and ripples, and a ring on the
@@ -49,6 +56,8 @@ where the look is developed first. It is a bright, cel-shaded cartoon:
 - **Fire:** hard-edged cartoon flames that lick and stretch as they fly, with embers, smoke and scorch marks.
 - **Effects:** ice daggers with cold-light trails, a shockwave with rocks punching up, a swirling tornado that turns
   into a fire tornado, a ball of air to ride, floating callouts and camera kick.
+- **The field:** cloth banners that flap in bent air and burn away from the bottom edge, charring straw and crates,
+  flying boards and staves, bursting barrels, glowing lanterns, steam when a fire is doused.
 
 It is also the quickest way to try a change to the physics. The Unreal build still draws everything with basic
 shapes; its materials and Niagara effects come next.
@@ -81,6 +90,12 @@ each technique did and what it cost, and every reaction between elements as it h
 - Spin up a tornado next to the stones (Air, F), switch to Fire and throw a fire blast into it: a fire tornado.
 - Stomp an earthquake (Earth, F) in the middle of the stones, then try it next to a boulder.
 - Throw ice daggers (Water, F) at a dummy. They take water from the whip, so it gets shorter.
+- One fire blast into the straw bales by the braziers sets the whole yard alight; put it out with water.
+- Set a banner alight, then lash it with water before it is gone.
+- Smash the crates by the rocks with a thrown rock or an earthquake. Burst a water barrel and watch the ground turn to mud.
+- Far from the ponds? Draw a whip from a water barrel.
+- Light the stone lanterns round the ring with fire.
+- Knock out a dummy (a thrown rock does it in one). It gets up again after a few seconds.
 - Lash the ground in front of you: the stream slaps it and splashes.
 - Freeze the whip (it costs about 32 chi to freeze 20 kg of water), then thaw it again.
 - Release the whip or throw a water blast onto soil, then run across the mud. It is slippery: you speed up and stop slowly until a ground flame dries it.
@@ -113,7 +128,8 @@ Plugins/Bending/             The bending system
 Tests/Sim/                   Kernel tests: math, thermodynamics, scenarios, terrain, whip, 3D sandbox, wasm parity
 Tools/SimDemo/               2D scenario driver + Bending Physics Lab (browser)
 Tools/Sandbox3D/             3D sandbox driver + Bending Training Ground (browser)
-docs/ARCHITECTURE.md         Design, equations, roadmap
+docs/ARCHITECTURE.md         Design, equations, verification
+docs/ROADMAP.md              Where the demo stands, what comes next, and what you can do
 ```
 
 ## Tests
@@ -121,7 +137,7 @@ docs/ARCHITECTURE.md         Design, equations, roadmap
 The physics kernel builds and runs without the engine (clang++ and Node 18+):
 
 ```
-Tests/run_all.sh                 # 220 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
+Tests/run_all.sh                 # 247 checks in five suites, plus bit-exact WebAssembly parity for both browser builds
 Tools/SimDemo/build_sandbox.sh   # writes Tools/SimDemo/build/BendingLab.html (the 2D reaction lab)
 ```
 

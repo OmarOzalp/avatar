@@ -193,7 +193,8 @@ browser build (`Tools/Sandbox3D`, WebAssembly + three.js) and the Unreal build (
 | `BendingTerrain.h` — `FTerrain` | A heightfield of soil over bedrock (`BedrockDepthCm`, 300 cm). Earthbending is a brush edit (disc, ring or band with a smooth falloff) that **moves soil**: every raise takes its volume from somewhere else, so total soil volume is conserved exactly. The work billed is the change in the soil's potential energy. `RemoveSoil` / `AddSoil` exchange soil with rocks pulled out of or crumbled back into the ground. `Raycast`, `GetHeightAt` and `GetNormalAt` follow the same triangulation the renderers draw (diagonal (x,y)→(x+1,y+1)), so what you see is what you stand on. A dirty rectangle tells renderers which cells changed. |
 | `BendingWaterWhip.h` — `FWaterWhip` | A stream of water simulated as a position-based-dynamics chain of 40 points (550 cm, 20 kg), tapering from 4.6 cm radius at the hand to 2 cm at the tip like a whip. Each segment is an owned Water **capsule volume in the `FSimWorld`**, so the whip boils against fire, soaks soil, shoves rocks and freezes like any other water. The motion follows waterbending's Tai Chi roots, continuous and circular, push and pull. **Holding:** the water circles the bender's chest in a loose loop. **Lash:** the move's startup frames draw the stream back over the shoulder, and its active frames are the snap. A loop rolls down the stream toward the aim in a three-quarter sidearm plane, so the tip travels at twice the loop's speed. After a beat at full reach, the stream flows back, hand first, into the loop. Nothing is held, and lashes chain on the way back. The bender's control is a spring-damper along the intended motion, capped at 450 m/s². Stretch is capped at 8%, so a stream pulled tight stops dead: that is the crack. At the crack the tip flings 8% of its water forward as spray (`ConsumeSpray`), which the owner spawns as a droplet cloud that slows in the air. Freezing extracts `m(cΔT + L_f)` segment by segment from the hand outward. `TakeWater` bends liquid water off the stream tip first (Ice Daggers), leaving at least 30% in each segment. Release hands each parcel to the owner. Per frame: `PreStep` → world step → `PostStep`. |
 | `BendingTechniques.h` | The 20 techniques on five input slots (LMB, RMB, Q, E, and F for each stance's signature move): element, slot, Startup / Active / Recovery frames, flat chi and stamina, whether held. `FTechniqueTuning` holds every physical parameter (masses, speeds, temperatures, brush sizes, chi exchange rates). Recipe functions build the matter (`MakeFlame`, `MakeBentAir`, `MakeWaterBall`, `MakeWaterSpray`, `MakeIceShard`, `MakeRock`), the brushes (`EarthWallBrushes`, `RaiseGroundBrushes`, …) and the energy (`KineticEnergyJ`, `HeatToMakeIce`). |
-| `BendingArena.h` | The training ground: a 96 × 96 m terrain (241² samples, 40 cm cells) with a plaza, hills, two pond basins and a boundary ridge, the prop placements (stones, rocks, boulders, soil clods, dummies, braziers, ice blocks), each prop's physical volume, and the player start. |
+| `BendingArena.h` | The training ground: a 96 × 96 m terrain (241² samples, 40 cm cells) with a plaza, hills, two pond basins and a boundary ridge, the prop placements (stones, rocks, boulders, soil clods, dummies, braziers, ice blocks, banners, stone lanterns, straw bales, crates, water barrels), each prop's physical volume, how it burns, how hard a blow smashes it, the water it holds, and the player start. |
+| `BendingCombustion.h` — `FCombustible` | Burning props. A prop soaks up heat from the Fire volumes within its reach (W per kelvin above ambient, scaled by flame size) and leaks it away over a few seconds; past its ignition heat it catches and keeps an **owned Fire volume** burning on itself, topped up to its flame temperature from its fuel, for its burn time. That flame is ordinary fire in the world: water boils on it, wind feeds it, and it heats the props beside it, so fire spreads. Enough water within reach (enough to boil away two seconds of the fire's heat) douses it at once and leaves it wet for a few seconds; a flame lost with no water about (merged into a passing fireball) flares up again. |
 
 ### Unreal sandbox (`Plugins/Bending/.../Sandbox`, `Source/Avatar`)
 
@@ -213,8 +214,8 @@ table, and the HUD draws on the canvas.
 | `ABendingQuakeActor` | The earthquake's look: two rings of rock punch up as the wave passes, overshoot and sink back. |
 | `ABendingWaterWhipActor` | Owns an `FWaterWhip` whose segments live in the interaction subsystem's `FSimWorld`. Per frame: `PostStep` → `SetBodyCenter` and `SetControl` from the bender → `PreStep`, then the subsystem steps the world at the end of the frame. Spray from the snap becomes a water projectile that slows in the air. The stream is drawn as small overlapping spheres along a Catmull-Rom curve. Fast water sheds droplets, and the stream splashes where it slaps the ground. |
 | `ABendingProjectile` | Bent fire, air, water or ice in flight with a `UElementalVolumeComponent`. Applies reaction impulses as `Δv = J/m`. On landing a flame burns on the ground, a water ball soaks in (mud) or rejoins a pond, and air flows along the ground. An ice dagger sweeps its path, puts its momentum into the first body it hits, and shatters. |
-| `ABendingPropActor` | Props with their kernel volume. Rocks, clods and dummies simulate physics and receive reaction impulses. Braziers keep a flame burning (water puts it out, flame relights it). Ice blocks melt into the soil. |
-| `AAvatarHUD` | Crosshair, chi and stamina, the stance's five techniques, a Startup / Active / Recovery frame bar with the cancel window, a feed of what each technique did and every reaction, mud traction, and the controls panel. |
+| `ABendingPropActor` | Props with their kernel volume. Rocks, clods and dummies simulate physics and receive reaction impulses. Braziers keep a flame burning (water puts it out, flame relights it). Ice blocks melt into the soil. Banners, straw, crates, dummies and lanterns burn through `FCombustible` on the subsystem's world (char, burn away, are put out). Crates and barrels smash on hard blows (kernel impulses, physics hits, quakes), spilling a barrel's water and a burning crate's fire. Dummies have health and a knockout; `OnPropHit` feeds the HUD's numbers. |
+| `AAvatarHUD` | Damage numbers, K.O. callouts, health bars over hurt dummies and a combo counter. Crosshair, chi and stamina, the stance's five techniques, a Startup / Active / Recovery frame bar with the cancel window, a feed of what each technique did and every reaction, mud traction, and the controls panel. |
 
 The interaction subsystem tells the two kinds of owned volume apart. A slot whose owner pointer is explicitly null
 belongs to a native owner (the whip), which consumes its own results. A *stale* pointer means a component died
@@ -240,8 +241,9 @@ builds both WebAssembly modules and checks them against the native results.
   - the whip against fire;
   - freeze and thaw, and partial freezing by mass when short of chi;
   - release, following a sprinting bender, and determinism.
-- **3D sandbox (67 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
-  jumping, every technique, water putting out fire, chi, determinism and cost.
+- **3D sandbox (94 checks):** the training ground driven through `Tools/Sandbox3D` with player inputs: walking,
+  jumping, every technique, water putting out fire, burning, smashing and soaking props, dummy health and knockouts,
+  chi, determinism and cost.
 - **WebAssembly parity:** both freestanding wasm builds replay their sessions and must match the native digests exactly.
 
 | Scenario | What happens (measured) |
@@ -272,6 +274,11 @@ builds both WebAssembly modules and checks them against the native results.
 | Jet Dash | Carries the bender 6.1 m in 0.5 s. |
 | Air Scooter | 14 m/s while held, back to 5 m/s running after letting go. |
 | Tornado | Lifts a 6 kg stone 7.7 m. A fire blast thrown in puts 0.63 kg of flame in the funnel: a fire tornado. |
+| Banners | One fire blast sets the cloth alight; left alone it burns away in 7 s (1.6 MJ). One lash of the whip puts it out with three quarters of the cloth left. |
+| Fire spreads | One fire blast into the straw yard: all six straw bales and crates are alight within 9 s. |
+| Smash and soak | A thrown rock smashes crates (and an earthquake smashes the rest); a thrown rock bursts a water barrel and its 60 kg soaks the ground round it to saturation 0.5. A whip can be drawn from a barrel (it gives up 20 kg). |
+| Lanterns | A fire blast lights one; it stays lit until water puts it out. |
+| Dummies | An air blast does 29 damage, a fire blast about 20 (and it burns), five ice daggers 94, a thrown rock knocks one out. Knocked out, it topples, then stands up whole where it stood after 6 s; burning, it stays down until the fire is out. |
 | Cost | A 922-frame scripted session runs at 0.04 ms per frame. |
 
 **Bending Physics Lab.** `Tools/SimDemo/build_sandbox.sh` writes `Tools/SimDemo/build/BendingLab.html`, a single
@@ -297,6 +304,11 @@ developed first, without image files. The style is a bright, cel-shaded cartoon,
 - **Technique effects:** ice crystals with cold-light streaks, a shockwave ring with rocks punching up through the
   ground, a cel-shaded swirling funnel with whirling debris that turns to flame when fire is fed in, and a spinning
   ball of air to ride.
+- **Nation outfits:** the bender changes into the stance's nation's clothes (parka and fur, green and tan, red and gold
+  with shoulder guards and a crowned topknot, Air Nomad robes and arrow); sash tails stream back with speed.
+- **The field and fights:** a burning-cloth shader (ragged ember edge, char), charring props, debris, damage numbers,
+  health bars, hit-stop, combos, and eight training goals. Fire sprites fade and grow in, halos live a fixed number of
+  frames whatever the frame rate, and fire, smoke and cloud noise come from one tiling texture.
 
 `window.trainingGround` exposes a manual clock (`manual`, `step`), input taps and a render-only camera (`view`).
 Automated captures use them to line up frame by frame with the physics.
