@@ -5,17 +5,24 @@
 #include "CollisionQueryParams.h"
 #include "Components/BendingComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/HitResult.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "Physics/BendingUnits.h"
 #include "Sandbox/BendingProjectile.h"
 #include "Sandbox/BendingPropActor.h"
+#include "Sandbox/BendingQuakeActor.h"
 #include "Sandbox/BendingSandboxArena.h"
+#include "Sandbox/BendingSandboxLibrary.h"
 #include "Sandbox/BendingTechniqueMove.h"
+#include "Sandbox/BendingTornadoActor.h"
 #include "Sandbox/BendingWaterWhipActor.h"
 #include "Sim/BendingArena.h"
 #include "Sim/BendingTechniques.h"
@@ -35,6 +42,13 @@ namespace
 	/** Below this aim distance the camera direction is used instead of the direction to the aim point. */
 	constexpr double MinAimDistanceCm = 50.0;
 	constexpr double MaxHandSpeedCmS = 3000.0;
+	/** Ice daggers are frozen to this temperature. */
+	constexpr double IceDaggerTemperatureK = 263.15;
+	/** Jet Dash: a puff of flame leaves the feet this often, this hot. */
+	constexpr double JetFlameIntervalS = 0.05;
+	constexpr double JetFlameTemperatureK = 1300.0;
+	/** Air Scooter: the ball under the feet (radius) and how high it lifts the body. */
+	constexpr double ScooterBallRadiusCm = 35.0;
 
 	const FLinearColor InfoColor(0.85f, 0.92f, 1.f);
 	const FLinearColor WarningColor(1.f, 0.72f, 0.3f);
@@ -85,6 +99,7 @@ void UBendingTechniqueComponent::EndPlay(const EEndPlayReason::Type EndPlayReaso
 	}
 	Holds.Reset();
 	Walls.Reset();
+	SetAirScooter(false);
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -173,6 +188,26 @@ void UBendingTechniqueComponent::OnTechniqueActive(const UBendingTechniqueMove* 
 
 	case EBendingTechnique::AirJump:
 		DoAirJump();
+		break;
+
+	case EBendingTechnique::IceDaggers:
+		ThrowIceDaggers();
+		break;
+
+	case EBendingTechnique::Earthquake:
+		DoEarthquake();
+		break;
+
+	case EBendingTechnique::FireRing:
+		DoFireRing();
+		break;
+
+	case EBendingTechnique::FireJet:
+		DoFireJet();
+		break;
+
+	case EBendingTechnique::Tornado:
+		SpawnTornado();
 		break;
 
 	default:
@@ -595,6 +630,266 @@ void UBendingTechniqueComponent::DoAirJump()
 	ABendingProjectile::SpawnProjectile(GetWorld(), EBendingProjectileKind::Air, Puff, Character, false);
 }
 
+// ---------------------------------------------------------------------------------------------------- Signature techniques
+
+void UBendingTechniqueComponent::ThrowIceDaggers()
+{
+	ABendingWaterWhipActor* WhipActor = Whip.Get();
+	if (!WhipActor)
+	{
+		AddMessage(TEXT("Ice Daggers need water: draw a whip near a pond first (LMB)"), WarningColor);
+		return;
+	}
+	if (WhipActor->IsAnyFrozen())
+	{
+		AddMessage(TEXT("Thaw the whip first (RMB)"), WarningColor);
+		return;
+	}
+
+	// Water bent off the end of the whip and frozen into daggers: the cold is billed like any freezing.
+	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	double WaterTemperatureK = UBendingSettings::Get().AmbientTemperatureK;
+	const double TakenKg = WhipActor->TakeWater(Tuning.IceDaggerCount * Tuning.IceDaggerMassKg, WaterTemperatureK);
+	if (TakenKg < 0.5 * Tuning.IceDaggerMassKg)
+	{
+		AddMessage(TEXT("Too little water left in the whip"), WarningColor);
+		return;
+	}
+	const double NeedJ = BendingSim::HeatToMakeIce(TakenKg, WaterTemperatureK, IceDaggerTemperatureK);
+	const double GrantedJ = SpendEnergy(NeedJ, EBendingEnergyKind::Thermal);
+	const int32 MaxCount = FMath::Max(Tuning.IceDaggerCount, 1);
+	const int32 Count = FMath::Clamp(FMath::RoundToInt(static_cast<float>(MaxCount * GrantedJ / FMath::Max(NeedJ, 1.0))), 1, MaxCount);
+	const double ShardKg = TakenKg / Count;
+	SpendEnergy(BendingSim::KineticEnergyJ(TakenKg, Tuning.IceDaggerSpeedMs), EBendingEnergyKind::Kinetic);
+
+	// A tight fan: one straight at the aim, the rest just around it.
+	const FVector Origin = GetHandLocation();
+	const FVector Aim = GetAimDirectionFrom(Origin);
+	FVector Side = FVector::CrossProduct(Aim, FVector::UpVector);
+	Side = Side.Size() > 0.1 ? Side.GetSafeNormal() : FVector::RightVector;
+	const FVector Lift = FVector::CrossProduct(Side, Aim).GetSafeNormal();
+	const double Spread = FMath::DegreesToRadians(Tuning.IceDaggerSpreadDeg);
+	static constexpr double Offsets[5][2] = { { 0.0, 0.0 }, { 1.0, 0.25 }, { -1.0, 0.25 }, { 0.5, -0.7 }, { -0.5, -0.7 } };
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		const double* Offset = Offsets[Index % 5];
+		const FVector Direction = (Aim + Side * (Offset[0] * Spread) + Lift * (Offset[1] * Spread)).GetSafeNormal();
+		const FVector Location = Origin + Direction * 25.0 + Side * (Offset[0] * 12.0) + Lift * (Offset[1] * 12.0);
+		const BendingSim::FVolume Shard = BendingSim::MakeIceShard(ShardKg, BendingUnits::ToSim(Location),
+			BendingUnits::ToSim(Direction * BendingUnits::MToCm(Tuning.IceDaggerSpeedMs)));
+		ABendingProjectile::SpawnProjectile(GetWorld(), EBendingProjectileKind::IceShard, Shard, GetOwner(), false);
+	}
+	AddMessage(FString::Printf(TEXT("Ice daggers: %d shards, %.0f kJ of cold"), Count, GrantedJ / 1000.0), InfoColor);
+}
+
+void UBendingTechniqueComponent::DoEarthquake()
+{
+	// A stomp: the ground shakes outward. Each loose body within reach gets kinetic energy that falls off with
+	// distance; equal energy moves a heavy body less (dv = sqrt(2 E / m)).
+	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const FVector Feet = GetFeetLocation();
+	const double Radius = FMath::Max(Tuning.EarthquakeRadiusCm, 1.0);
+	TArray<TPair<TWeakObjectPtr<ABendingPropActor>, double>> Shares;
+	double RequestedJ = Tuning.EarthquakeGroundJ;
+	for (TActorIterator<ABendingPropActor> It(GetWorld()); It; ++It)
+	{
+		ABendingPropActor* Prop = *It;
+		if (!Prop || !Prop->IsLoose())
+		{
+			continue;
+		}
+		const FVector Offset = Prop->GetActorLocation() - Feet;
+		const double Distance = FVector(Offset.X, Offset.Y, 0.0).Size();
+		if (Distance < Radius)
+		{
+			const double Falloff = 1.0 - Distance / Radius;
+			const double ShareJ = Tuning.EarthquakeEnergyJ * Falloff * Falloff;
+			Shares.Emplace(Prop, ShareJ);
+			RequestedJ += ShareJ;
+		}
+	}
+	const double Scale = SpendEnergy(RequestedJ, EBendingEnergyKind::Kinetic) / FMath::Max(RequestedJ, 1.0);
+	int32 Thrown = 0;
+	for (const TPair<TWeakObjectPtr<ABendingPropActor>, double>& Share : Shares)
+	{
+		ABendingPropActor* Prop = Share.Key.Get();
+		if (!Prop)
+		{
+			continue;
+		}
+		FVector Out = Prop->GetActorLocation() - Feet;
+		Out.Z = 0.0;
+		Out = Out.Size() > 1.0 ? Out.GetSafeNormal() : GetFlatAimDirection();
+		const double SpeedCmS = FMath::Min(BendingUnits::MToCm(BendingSim::KSqrt(2.0 * Share.Value * Scale / FMath::Max(Prop->GetMassKg(), 0.1))),
+			BendingUnits::MToCm(Tuning.EarthquakeMaxSpeedMs));
+		Prop->AddVelocity((Out * 0.75 + FVector(0.0, 0.0, 0.66)).GetSafeNormal() * SpeedCmS);
+		++Thrown;
+	}
+
+	FActorSpawnParameters Params;
+	Params.Owner = GetOwner();
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	if (ABendingQuakeActor* Quake = GetWorld()->SpawnActor<ABendingQuakeActor>(ABendingQuakeActor::StaticClass(), FTransform(Feet), Params))
+	{
+		Quake->InitQuake(Feet);
+	}
+	AddMessage(FString::Printf(TEXT("Earthquake: %d thing%s thrown"), Thrown, Thrown == 1 ? TEXT("") : TEXT("s")), InfoColor);
+}
+
+void UBendingTechniqueComponent::DoFireRing()
+{
+	// A spin kick throws flame out in every direction: the heat of every flame is paid for, then its motion.
+	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const int32 Count = FMath::Max(Tuning.FireRingCount, 1);
+	const double Ambient = UBendingSettings::Get().AmbientTemperatureK;
+	const BendingSim::FVolume Sample = BendingSim::MakeFlame(Tuning.FireRingMassKg, Tuning.FireRingTemperatureK, BendingSim::FVec3(), BendingSim::FVec3());
+	const double HeatEachJ = Sample.GetHeatCapacityJPerK() * FMath::Max(Tuning.FireRingTemperatureK - Ambient, 0.0);
+	const double GrantedJ = SpendEnergy(HeatEachJ * Count, EBendingEnergyKind::Thermal);
+	const double MassKg = Tuning.FireRingMassKg * GrantedJ / FMath::Max(HeatEachJ * Count, 1.0);
+	if (MassKg < 0.02)
+	{
+		AddOutOfChiMessage();
+		return;
+	}
+	SpendEnergy(Count * BendingSim::KineticEnergyJ(MassKg, Tuning.FireRingSpeedMs), EBendingEnergyKind::Kinetic);
+	const FVector Center = GetFeetLocation() + FVector(0.0, 0.0, 75.0);
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		const double Angle = 2.0 * UE_DOUBLE_PI * Index / Count;
+		const FVector Out(FMath::Cos(Angle), FMath::Sin(Angle), 0.03);
+		const BendingSim::FVolume Flame = BendingSim::MakeFlame(MassKg, Tuning.FireRingTemperatureK, BendingUnits::ToSim(Center + Out * 60.0),
+			BendingUnits::ToSim(Out * BendingUnits::MToCm(Tuning.FireRingSpeedMs)));
+		// A light on every fourth flame is enough to light the ring.
+		ABendingProjectile::SpawnProjectile(GetWorld(), EBendingProjectileKind::Fire, Flame, GetOwner(), Index % 4 == 0);
+	}
+	AddMessage(FString::Printf(TEXT("Ring of Fire: %d flames, %.1f MJ"), Count, GrantedJ / 1.0e6), InfoColor);
+}
+
+void UBendingTechniqueComponent::DoFireJet()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character)
+	{
+		return;
+	}
+	// Fire jets from the feet: the bender's own kinetic energy is the work.
+	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const double RequestedJ = BendingSim::KineticEnergyJ(BenderMassKg, Tuning.FireJetSpeedMs);
+	const double GrantedJ = SpendEnergy(RequestedJ, EBendingEnergyKind::Kinetic);
+	const double SpeedMs = Tuning.FireJetSpeedMs * BendingSim::KSqrt(GrantedJ / FMath::Max(RequestedJ, 1.0));
+	if (SpeedMs < 0.5 * Tuning.FireJetSpeedMs)
+	{
+		AddOutOfChiMessage();
+	}
+	DashVelocityCmS = GetFlatAimDirection() * BendingUnits::MToCm(SpeedMs);
+	DashRemainingS = Tuning.FireJetSeconds;
+	DashEmitTimerS = 0.0;
+	Character->LaunchCharacter(DashVelocityCmS + FVector(0.0, 0.0, BendingUnits::MToCm(Tuning.FireJetLiftMs)), true, true);
+}
+
+void UBendingTechniqueComponent::TickFireJet(float DeltaSeconds)
+{
+	if (DashRemainingS <= 0.0)
+	{
+		return;
+	}
+	DashRemainingS -= DeltaSeconds;
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr)
+	{
+		// The jets hold the dash speed while they burn.
+		Movement->Velocity.X = DashVelocityCmS.X;
+		Movement->Velocity.Y = DashVelocityCmS.Y;
+	}
+
+	// Each puff of flame from the feet is paid for as heat.
+	DashEmitTimerS -= DeltaSeconds;
+	if (DashEmitTimerS > 0.0)
+	{
+		return;
+	}
+	DashEmitTimerS = JetFlameIntervalS;
+	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const FVector Back = -DashVelocityCmS.GetSafeNormal();
+	const FVector Feet = GetFeetLocation() + FVector(0.0, 0.0, 20.0);
+	BendingSim::FVolume Flame = BendingSim::MakeFlame(Tuning.FireJetFlameMassKg, JetFlameTemperatureK, BendingUnits::ToSim(Feet),
+		BendingUnits::ToSim(Back * 400.0 - FVector(0.0, 0.0, 150.0)));
+	const double HeatJ = Flame.GetHeatCapacityJPerK() * FMath::Max(JetFlameTemperatureK - UBendingSettings::Get().AmbientTemperatureK, 0.0);
+	const double GrantedJ = SpendEnergy(HeatJ, EBendingEnergyKind::Thermal);
+	if (GrantedJ < 0.2 * HeatJ)
+	{
+		return;
+	}
+	Flame = BendingSim::MakeFlame(Tuning.FireJetFlameMassKg * GrantedJ / FMath::Max(HeatJ, 1.0), JetFlameTemperatureK, Flame.LocationCm, Flame.VelocityCmS);
+	ABendingProjectile::SpawnProjectile(GetWorld(), EBendingProjectileKind::Fire, Flame, GetOwner(), false);
+}
+
+void UBendingTechniqueComponent::SpawnTornado()
+{
+	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
+	const double GrantedJ = SpendEnergy(Tuning.TornadoEnergyJ, EBendingEnergyKind::Kinetic);
+	if (GrantedJ < 0.5 * Tuning.TornadoEnergyJ)
+	{
+		AddMessage(TEXT("Not enough chi to spin up a tornado"), WarningColor);
+		return;
+	}
+	// One at a time: a new one replaces the last.
+	if (ABendingTornadoActor* Previous = Tornado.Get())
+	{
+		Previous->Destroy();
+	}
+	const FVector Spot = GetAimGroundPoint(Tuning.TornadoRangeCm, 0.0);
+	FActorSpawnParameters Params;
+	Params.Owner = GetOwner();
+	Params.Instigator = Cast<APawn>(GetOwner());
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ABendingTornadoActor* NewTornado = GetWorld()->SpawnActor<ABendingTornadoActor>(ABendingTornadoActor::StaticClass(), FTransform(Spot), Params);
+	if (!NewTornado)
+	{
+		return;
+	}
+	NewTornado->InitTornado(Spot, Tuning.TornadoSeconds * GrantedJ / Tuning.TornadoEnergyJ);
+	Tornado = NewTornado;
+	AddMessage(TEXT("Tornado! Throw fire into it for a fire tornado"), InfoColor);
+}
+
+void UBendingTechniqueComponent::SetAirScooter(bool bRiding)
+{
+	bAirScooter = bRiding;
+	AActor* Owner = GetOwner();
+	if (bRiding && !ScooterBall && Owner && Owner->GetRootComponent())
+	{
+		ScooterBall = NewObject<UStaticMeshComponent>(Owner, TEXT("AirScooterBall"));
+		ScooterBall->SetStaticMesh(UBendingSandboxLibrary::LoadBasicShape(TEXT("Sphere")));
+		ScooterBall->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+		ScooterBall->SetGenerateOverlapEvents(false);
+		ScooterBall->SetCanEverAffectNavigation(false);
+		ScooterBall->SetCastShadow(false);
+		ScooterBall->SetupAttachment(Owner->GetRootComponent());
+		ScooterBall->RegisterComponent();
+		UBendingSandboxLibrary::SetMeshColor(ScooterBall, UBendingSandboxLibrary::FromSRGB(222, 238, 255));
+	}
+	if (ScooterBall)
+	{
+		// The ball spins under the feet; the body perches on top of it (AAvatarCharacter lifts it).
+		const double HalfHeight = Owner ? Owner->GetSimpleCollisionHalfHeight() : 90.0;
+		ScooterBall->SetRelativeLocation(FVector(0.0, 0.0, -HalfHeight + ScooterBallRadiusCm - 15.0));
+		ScooterBall->SetRelativeScale3D(FVector(ScooterBallRadiusCm / 50.0));
+		ScooterBall->SetVisibility(bRiding);
+	}
+}
+
+float UBendingTechniqueComponent::GetAirScooterSpeedCmS() const
+{
+	return static_cast<float>(BendingUnits::MToCm(GetTuning().AirScooterSpeedMs));
+}
+
+FVector UBendingTechniqueComponent::GetFeetLocation() const
+{
+	const AActor* Owner = GetOwner();
+	return Owner->GetActorLocation() - FVector(0.0, 0.0, Owner->GetSimpleCollisionHalfHeight());
+}
+
 // ---------------------------------------------------------------------------------------------------- Held techniques
 
 void UBendingTechniqueComponent::StartHold(const UBendingTechniqueMove* Move)
@@ -634,6 +929,11 @@ void UBendingTechniqueComponent::StartHold(const UBendingTechniqueMove* Move)
 		}
 		break;
 	}
+
+	case EBendingTechnique::AirScooter:
+		SetAirScooter(true);
+		AddMessage(TEXT("Air scooter: hold Q to ride"), InfoColor);
+		break;
 
 	case EBendingTechnique::GroundFlame:
 	{
@@ -692,6 +992,15 @@ bool UBendingTechniqueComponent::SustainHold(FTechniqueHold& Hold, float DeltaSe
 
 	case EBendingTechnique::GroundFlame:
 		return SustainGroundFlame(Hold, DeltaSeconds);
+
+	case EBendingTechnique::AirScooter:
+	{
+		// Keeping the ball spinning: the drag work at speed, scaled up (a spinning ball, not a sail), plus a little
+		// to hover.
+		const double SpeedMs = BendingUnits::CmToM(GetOwner()->GetVelocity().Size2D());
+		const double DragW = 0.5 * UBendingSettings::Get().AmbientAirDensityKgM3 * 0.8 * 0.6 * SpeedMs * SpeedMs * SpeedMs;
+		return PayForWork((DragW * Tuning.AirScooterUpkeepScale + 2500.0) * DeltaSeconds, EBendingEnergyKind::Kinetic);
+	}
 
 	case EBendingTechnique::FlameStream:
 	case EBendingTechnique::AirGust:
@@ -773,6 +1082,10 @@ void UBendingTechniqueComponent::EndHold(const FTechniqueHold& Hold)
 		}
 		break;
 
+	case EBendingTechnique::AirScooter:
+		SetAirScooter(false);
+		break;
+
 	case EBendingTechnique::GroundFlame:
 		// No longer fed by the bender, the flame burns the ground it lit, then cools and goes out on its own.
 		if (ABendingProjectile* Flame = Hold.Flame.Get())
@@ -796,6 +1109,7 @@ void UBendingTechniqueComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	UpdateAim();
 	UpdateHand(DeltaTime);
+	TickFireJet(DeltaTime);
 	TickHeldRock();
 	TickWalls(DeltaTime);
 	TickHolds(DeltaTime);
@@ -926,6 +1240,10 @@ FString UBendingTechniqueComponent::GetStatusText() const
 	if (Walls.Num() > 0)
 	{
 		Parts.Add(TEXT("Wall rising"));
+	}
+	if (const ABendingTornadoActor* TornadoActor = Tornado.Get())
+	{
+		Parts.Add(TornadoActor->GetFireKg() > 0.0 ? FString::Printf(TEXT("Fire tornado (%.1f kg of flame)"), TornadoActor->GetFireKg()) : FString(TEXT("Tornado spinning")));
 	}
 	// A waterbender needs a source: say how far the nearest water is.
 	const UBendingComponent* Bending = GetBendingComponent();

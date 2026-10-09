@@ -201,6 +201,8 @@ private:
 	FAvatarBodyPose CurrentPose;
 	float WalkPhase = 0.f;
 	float CastWeight = 0.f;
+	/** Body lift while perched on an air scooter (cm). */
+	float ScooterLiftCm = 0.f;
 	EBendingElement TintedElement = EBendingElement::None;
 	bool bBodyTinted = false;
 	bool bSprinting = false;

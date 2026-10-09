@@ -76,6 +76,65 @@ namespace
 		return Technique == EBendingTechnique::RockThrow || Technique == EBendingTechnique::EarthWall
 			|| Technique == EBendingTechnique::RaiseGround || Technique == EBendingTechnique::LowerGround;
 	}
+
+	/** Full-body poses of the signature moves, Jet Dash and the air scooter. False for every other technique. */
+	bool ComputeSignaturePose(EBendingTechnique Technique, EBendingPhase Phase, float Ease, FAvatarBodyPose& Pose)
+	{
+		const bool bStartup = Phase == EBendingPhase::Startup;
+		switch (Technique)
+		{
+		case EBendingTechnique::Earthquake:
+			// Both arms rise high, then slam down with the stomp.
+			Pose.ArmL = Pose.ArmR = bStartup ? FMath::Lerp(10.f, 160.f, Ease) : -15.f;
+			Pose.ArmRollL = 15.f;
+			Pose.ArmRollR = -15.f;
+			Pose.SpinePitch = bStartup ? -8.f * Ease : 20.f;
+			Pose.LegL = bStartup ? 25.f * Ease : 10.f;
+			Pose.BobCm = bStartup ? 4.f * Ease : -14.f;
+			return true;
+
+		case EBendingTechnique::FireRing:
+			// Arms sweep out wide and the body twists into the spin kick.
+			Pose.ArmL = Pose.ArmR = 0.f;
+			Pose.ArmRollL = FMath::Lerp(10.f, 85.f, bStartup ? Ease : 1.f);
+			Pose.ArmRollR = -Pose.ArmRollL;
+			Pose.SpineYaw = bStartup ? -35.f * Ease : 40.f;
+			Pose.LegR = bStartup ? 0.f : 55.f;
+			return true;
+
+		case EBendingTechnique::Tornado:
+			// Arms circle up over the head.
+			Pose.ArmL = Pose.ArmR = bStartup ? FMath::Lerp(40.f, 165.f, Ease) : 165.f;
+			Pose.ArmRollL = 25.f;
+			Pose.ArmRollR = -25.f;
+			Pose.SpineYaw = bStartup ? 30.f * FMath::Sin(Ease * 2.f * UE_PI) : 0.f;
+			return true;
+
+		case EBendingTechnique::FireJet:
+			// Crouch, then shoot forward with the arms swept back.
+			Pose.ArmL = Pose.ArmR = bStartup ? -20.f * Ease : -60.f;
+			Pose.ArmRollL = 20.f;
+			Pose.ArmRollR = -20.f;
+			Pose.SpinePitch = bStartup ? -18.f * Ease : -32.f;
+			Pose.LegL = bStartup ? 20.f * Ease : 35.f;
+			Pose.LegR = bStartup ? -10.f * Ease : -35.f;
+			Pose.BobCm = bStartup ? -10.f * Ease : 0.f;
+			return true;
+
+		case EBendingTechnique::AirScooter:
+			// Balancing on the ball: knees soft, arms out a little.
+			Pose.ArmL = Pose.ArmR = 25.f;
+			Pose.ArmRollL = 40.f;
+			Pose.ArmRollR = -40.f;
+			Pose.SpinePitch = -12.f;
+			Pose.LegL = 12.f;
+			Pose.LegR = -8.f;
+			return true;
+
+		default:
+			return false;
+		}
+	}
 }
 
 AAvatarCharacter::AAvatarCharacter(const FObjectInitializer& ObjectInitializer)
@@ -514,6 +573,14 @@ void AAvatarCharacter::UpdateMovementMode()
 	Movement->bOrientRotationToMovement = !bAiming;
 	Movement->bUseControllerDesiredRotation = bAiming;
 	Movement->MaxWalkSpeed = (bSprinting ? SprintSpeed : WalkSpeed) * (bCasting ? CastingSpeedScale : 1.f);
+
+	// On an air scooter the bender rides fast and faces where it goes.
+	if (Techniques->IsRidingAirScooter())
+	{
+		Movement->MaxWalkSpeed = Techniques->GetAirScooterSpeedCmS();
+		Movement->bOrientRotationToMovement = true;
+		Movement->bUseControllerDesiredRotation = false;
+	}
 }
 
 void AAvatarCharacter::UpdateElementTint()
@@ -570,6 +637,11 @@ float AAvatarCharacter::ComputeCastPose(FAvatarBodyPose& Pose) const
 
 	const float Ease = Progress * Progress * (3.f - 2.f * Progress);
 	const float Reach = 90.f + GetAimPitchDegrees();
+
+	if (ComputeSignaturePose(Technique, Phase, Ease, Pose))
+	{
+		return Phase == EBendingPhase::Recovery ? 1.f - Ease : 1.f;
+	}
 
 	if (Phase == EBendingPhase::Startup)
 	{
@@ -685,7 +757,9 @@ void AAvatarCharacter::UpdateBodyAnimation(float DeltaSeconds)
 	CastWeight = FMath::FInterpTo(CastWeight, CastTarget, DeltaSeconds, 20.f);
 	CurrentPose = InterpPose(CurrentPose, LerpPose(Locomotion, Casting, CastWeight), DeltaSeconds, 18.f);
 
-	BodyRoot->SetRelativeLocation(FVector(0.0, 0.0, CurrentPose.BobCm));
+	// Perched on the air scooter's ball.
+	ScooterLiftCm = FMath::FInterpTo(ScooterLiftCm, Techniques->IsRidingAirScooter() ? 55.f : 0.f, DeltaSeconds, 14.f);
+	BodyRoot->SetRelativeLocation(FVector(0.0, 0.0, CurrentPose.BobCm + ScooterLiftCm));
 	Spine->SetRelativeRotation(FRotator(CurrentPose.SpinePitch, CurrentPose.SpineYaw, 0.f));
 	HipL->SetRelativeRotation(FRotator(CurrentPose.LegL, 0.f, 0.f));
 	HipR->SetRelativeRotation(FRotator(CurrentPose.LegR, 0.f, 0.f));

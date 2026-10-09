@@ -11,10 +11,12 @@
 class ABendingProjectile;
 class ABendingPropActor;
 class ABendingSandboxArena;
+class ABendingTornadoActor;
 class ABendingWaterWhipActor;
 class UBendingComponent;
 class UBendingTechniqueMove;
 class USceneComponent;
+class UStaticMeshComponent;
 
 /** A line for the HUD: what a technique did or why it could not. */
 struct FBendingTechniqueMessage
@@ -30,8 +32,8 @@ struct FBendingTechniqueMessage
  * soil, launches bent fire and air, and bills every joule of work through UBendingComponent::SpendChiForEnergy
  * (scaling the effect down when the bender runs short of chi).
  *
- * Held techniques (Raise / Lower Ground, Flame Stream, Gust, Ground Flame) start on their active frame and keep
- * going while the move's input stays held, independent of when the ability itself ends.
+ * Held techniques (Raise / Lower Ground, Flame Stream, Gust, Ground Flame, Air Scooter) start on their active frame
+ * and keep going while the move's input stays held, independent of when the ability itself ends.
  */
 UCLASS(ClassGroup = (Bending), meta = (BlueprintSpawnableComponent))
 class BENDING_API UBendingTechniqueComponent : public UActorComponent
@@ -80,6 +82,17 @@ public:
 	/** The most recently started technique that is still being held, or None. */
 	UFUNCTION(BlueprintPure, Category = "Bending|Techniques")
 	EBendingTechnique GetSustainedTechnique() const;
+
+	/** Riding an air scooter (Air Q held): the body moves at GetAirScooterSpeedCmS and perches on the ball. */
+	UFUNCTION(BlueprintPure, Category = "Bending|Techniques")
+	bool IsRidingAirScooter() const { return bAirScooter; }
+
+	UFUNCTION(BlueprintPure, Category = "Bending|Techniques")
+	float GetAirScooterSpeedCmS() const;
+
+	/** Jet Dash in progress: fire jets from the feet hold the dash velocity. */
+	UFUNCTION(BlueprintPure, Category = "Bending|Techniques")
+	bool IsJetDashing() const { return DashRemainingS > 0.0; }
 
 	/** One line about matter under control: the whip's water, a lifted rock, held techniques. */
 	FString GetStatusText() const;
@@ -166,6 +179,15 @@ private:
 	void DropHeldRock();
 	void BeginEarthWall();
 	void DoAirJump();
+	/** Signature techniques (F) and the newer Q techniques; same rules as the browser sandbox. */
+	void ThrowIceDaggers();
+	void DoEarthquake();
+	void DoFireRing();
+	void DoFireJet();
+	void SpawnTornado();
+	void SetAirScooter(bool bRiding);
+	void TickFireJet(float DeltaSeconds);
+	FVector GetFeetLocation() const;
 	void StartHold(const UBendingTechniqueMove* Move);
 	/** False when the hold must stop (out of chi, its flame went out). */
 	bool SustainHold(FTechniqueHold& Hold, float DeltaSeconds);
@@ -223,6 +245,15 @@ private:
 	FVector LastHandLocation = FVector::ZeroVector;
 	FVector HandVelocityCmS = FVector::ZeroVector;
 	bool bHasLastHandLocation = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> ScooterBall;
+
+	TWeakObjectPtr<ABendingTornadoActor> Tornado;
+	bool bAirScooter = false;
+	double DashRemainingS = 0.0;
+	double DashEmitTimerS = 0.0;
+	FVector DashVelocityCmS = FVector::ZeroVector;
 
 	FVector RockRiseFrom = FVector::ZeroVector;
 	FVector RockRiseTo = FVector::ZeroVector;
