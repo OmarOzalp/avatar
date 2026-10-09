@@ -104,9 +104,13 @@ void UBendingTechniqueComponent::OnTechniqueStartup(const UBendingTechniqueMove*
 	switch (Move->Technique)
 	{
 	case EBendingTechnique::WaterWhip:
-		// Water is drawn as the move starts; its active frame lashes a whip that was already held.
-		bWhipDrawnThisMove = false;
-		if (!HasWaterWhip())
+		// Without a whip, the move draws one from a pond. With one, the lash starts now: the startup frames draw the
+		// stream back over the shoulder, the active frames are the strike, and the water then flows back on its own.
+		if (HasWaterWhip())
+		{
+			LashWaterWhip(Move->FrameData.GetPhaseSeconds(EBendingPhase::Startup), Move->FrameData.GetPhaseSeconds(EBendingPhase::Active));
+		}
+		else
 		{
 			BeginWaterWhip();
 		}
@@ -136,13 +140,6 @@ void UBendingTechniqueComponent::OnTechniqueActive(const UBendingTechniqueMove* 
 	const BendingSim::FTechniqueTuning& Tuning = GetTuning();
 	switch (Move->Technique)
 	{
-	case EBendingTechnique::WaterWhip:
-		if (!bWhipDrawnThisMove && HasWaterWhip())
-		{
-			LashWaterWhip();
-		}
-		break;
-
 	case EBendingTechnique::WaterFreeze:
 		FreezeOrThawWhip();
 		break;
@@ -222,10 +219,6 @@ void UBendingTechniqueComponent::OnTechniqueEnded(const UBendingTechniqueMove* M
 		// Interrupted before the throw: the rock drops.
 		DropHeldRock();
 	}
-	else if (Move->Technique == EBendingTechnique::WaterWhip)
-	{
-		bWhipDrawnThisMove = false;
-	}
 }
 
 // ---------------------------------------------------------------------------------------------------- Water
@@ -266,7 +259,6 @@ void UBendingTechniqueComponent::BeginWaterWhip()
 		return;
 	}
 	Whip = NewWhip;
-	bWhipDrawnThisMove = true;
 
 	// Work: lifting the water from the pond surface to the hand.
 	const double LiftM = FMath::Max(BendingUnits::CmToM(HandLocation.Z - Source.Z), 0.0);
@@ -274,16 +266,19 @@ void UBendingTechniqueComponent::BeginWaterWhip()
 	AddMessage(FString::Printf(TEXT("Drew %.0f kg of water from the pond"), WaterKg), InfoColor);
 }
 
-void UBendingTechniqueComponent::LashWaterWhip()
+void UBendingTechniqueComponent::LashWaterWhip(double WindupS, double StrikeS)
 {
 	ABendingWaterWhipActor* WhipActor = Whip.Get();
 	if (!WhipActor)
 	{
 		return;
 	}
-	if (!WhipActor->Lash())
+	if (!WhipActor->Lash(WindupS, StrikeS))
 	{
-		AddMessage(TEXT("The water is still streaming in"), InfoColor);
+		if (WhipActor->IsForming())
+		{
+			AddMessage(TEXT("The water is still streaming in"), InfoColor);
+		}
 		return;
 	}
 	SpendEnergy(BendingSim::KineticEnergyJ(WhipActor->GetMassKg(), WhipLashSpeedMs), EBendingEnergyKind::Kinetic);
@@ -890,17 +885,6 @@ bool UBendingTechniqueComponent::HasWaterWhip() const
 ABendingWaterWhipActor* UBendingTechniqueComponent::GetWaterWhip() const
 {
 	return Whip.Get();
-}
-
-bool UBendingTechniqueComponent::ShouldHoldWhipExtended() const
-{
-	const UBendingComponent* Bending = GetBendingComponent();
-	if (!Bending || Bending->GetActiveElement() != EBendingElement::Water)
-	{
-		return false;
-	}
-	const BendingSim::FTechniqueInfo& Info = BendingTechnique::GetInfo(EBendingTechnique::WaterWhip);
-	return Bending->IsInputHeld(BendingTechnique::GetInputTag(Info.Slot));
 }
 
 bool UBendingTechniqueComponent::IsHoldingRock() const

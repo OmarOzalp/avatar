@@ -53,6 +53,9 @@ public:
 	/** Moves a grounded flame along the ground toward a point (a bender dragging it). */
 	void DragAlongGround(const FVector& TargetCm, double MaxStepCm);
 
+	/** Water as spray: it loses its speed to the air over DragTimeS and draws no ball (the whip draws its droplets). */
+	void MakeSpray(double DragTimeS);
+
 	EBendingProjectileKind GetKind() const { return Kind; }
 	bool IsGrounded() const { return bGrounded; }
 
@@ -103,6 +106,8 @@ private:
 	double AgeSeconds = 0.0;
 	double LifetimeSeconds = 3.0;
 	float LastColorTemperatureK = 0.f;
+	/** Spray only: time for air drag to take most of its speed (s); 0 = no drag. */
+	double SprayDragTimeS = 0.0;
 	bool bGrounded = false;
 	bool bWithFlameLight = false;
 	bool bInitialized = false;

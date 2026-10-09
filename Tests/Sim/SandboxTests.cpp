@@ -263,6 +263,8 @@ namespace
 		}
 		std::printf("    lash tip peaked at %.1f m/s\n", PeakTip / 100.0);
 		ExpectTrue("second press lashes (tip > 15 m/s)", PeakTip > 1500.0);
+		Run(Input, 0.6);
+		ExpectTrue("the whip comes back to circle the bender", GSandbox.Whip.GetState() == EWhipState::Holding);
 
 		Teleport(-600.0, -300.0, 0.0);
 		Run(LookAt(Ground(400.0, -300.0)), 0.5);
@@ -289,17 +291,14 @@ namespace
 		Press(ETechniqueSlot::Primary, Ground(700.0, -400.0), 1.2);
 		Teleport(Anchor.X - 420.0, Anchor.Y, 0.0);
 		Run(LookAt(Flame), 0.5);
-		// Lash, then keep holding the button: the whip stays stretched into the fire.
-		FInput HoldLash = LookAt(Flame);
-		HoldLash.bSlotHeld[0] = true;
-		double HeldS = 0.0;
-		for (; HeldS < 4.0 && GSandbox.Bodies[Brazier].bLit; HeldS += Dt)
+		// Lash it: each strike drives the stream through the flame and flings spray into it.
+		int Lashes = 0;
+		while (Lashes < 6 && GSandbox.Bodies[Brazier].bLit)
 		{
-			GSandbox.Advance(HoldLash, Dt);
+			Press(ETechniqueSlot::Primary, Flame, 0.7);
+			++Lashes;
 		}
-		HoldLash.bSlotHeld[0] = false;
-		GSandbox.Advance(HoldLash, Dt);
-		std::printf("    whip held in the brazier: out after %.2f s\n", HeldS);
+		std::printf("    brazier out after %d lash%s\n", Lashes, Lashes == 1 ? "" : "es");
 		ExpectTrue("lashing water puts the brazier out", !GSandbox.Bodies[Brazier].bLit);
 		ExpectTrue("whip lost water to steam", GSandbox.Whip.IsActive() && GSandbox.Whip.GetMassKg(GSandbox.World) < GSandbox.Tuning.WhipWaterKg);
 		std::printf("    whip mass after the fight: %.2f kg\n", GSandbox.Whip.GetMassKg(GSandbox.World));

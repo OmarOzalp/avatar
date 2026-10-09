@@ -110,6 +110,58 @@ namespace
 		ExpectTrue("tip cracks faster than 15 m/s", PeakTip > 1500.0);
 		ExpectTrue("whip reaches out along the aim (> 80% of its length)", Along > 0.8 * Whip.Settings.LengthCm);
 		ExpectTrue("tip ends near the aim line (< 1 m off)", OffLine < 100.0);
+
+		FWhipDrop Spray[FWaterWhip::MaxPendingSpray];
+		const int NumSpray = Whip.ConsumeSpray(Spray, FWaterWhip::MaxPendingSpray);
+		ExpectTrue("the snap flings spray off the tip", NumSpray == 1 && Spray[0].MassKg > 0.05);
+		if (NumSpray == 1)
+		{
+			std::printf("    spray: %.2f kg at %.1f m/s along the aim\n", Spray[0].MassKg, Spray[0].VelocityCmS.Dot(Line) / 100.0);
+			ExpectTrue("spray flies on toward the aim (> 5 m/s)", Spray[0].VelocityCmS.Dot(Line) > 500.0);
+			ExpectNear("water is conserved: whip + spray = 20 kg", Whip.GetMassKg(GWorld) + Spray[0].MassKg, 20.0, 1e-9);
+		}
+
+		// Nothing is held: the whip comes back to circle the bender by itself.
+		for (int Step = 0; Step < 45; ++Step)
+		{
+			Frame(Whip, Hand, FVec3(), Aim);
+		}
+		double Farthest = 0.0;
+		for (int Index = 0; Index < Whip.GetNumPoints(); ++Index)
+		{
+			Farthest = KMax(Farthest, Distance(Whip.GetPoint(Index), Hand));
+		}
+		std::printf("    1.25 s after the lash: %s, farthest water %.0f cm from the hand\n", Whip.GetState() == EWhipState::Holding ? "circling again" : "still out", Farthest);
+		ExpectTrue("comes back on its own", Whip.GetState() == EWhipState::Holding);
+		ExpectTrue("back around the bender (< 2.6 m from the hand)", Farthest < 260.0);
+	}
+
+	void LashesChain()
+	{
+		SimTest::Section("Lashes chain and the stream tapers");
+		ResetWorld();
+		FWaterWhip Whip;
+		Whip.Create(GWorld, Pond, Hand, 20.0, 288.15);
+		const FVec3 Aim(900.0, 0.0, 100.0);
+		for (int Step = 0; Step < 80; ++Step)
+		{
+			Frame(Whip, Hand, FVec3(), Aim);
+		}
+		ExpectTrue("thicker at the hand than at the tip", Whip.GetSegmentRadiusCm(0) > 1.5 * Whip.GetSegmentRadiusCm(Whip.GetNumSegments() - 1));
+		std::printf("    radius %.1f cm at the hand, %.1f cm at the tip\n", Whip.GetSegmentRadiusCm(0), Whip.GetSegmentRadiusCm(Whip.GetNumSegments() - 1));
+		Whip.Lash();
+		ExpectTrue("cannot restart a lash mid-strike", !Whip.Lash());
+		int Lashes = 1;
+		for (int Step = 0; Step < 90; ++Step)
+		{
+			if (Whip.GetState() == EWhipState::Returning && Whip.Lash())
+			{
+				++Lashes;
+			}
+			Frame(Whip, Hand, FVec3(), Aim);
+		}
+		ExpectTrue("a lash on the way back starts the next one", Lashes >= 3);
+		ExpectNear("chain keeps its length through chained lashes (cm)", ChainLength(Whip), Whip.Settings.LengthCm, 0.08 * Whip.Settings.LengthCm);
 	}
 
 	void ForceBudgetIsPhysical()
@@ -151,7 +203,9 @@ namespace
 		const double MassBefore = Whip.GetMassKg(GWorld);
 		bool bExtinguished = false;
 		double SteamKg = 0.0;
+		double SprayKg = 0.0;
 		FReactionEvent Events[FSimWorld::MaxFlushedEvents];
+		FWhipDrop Spray[FWaterWhip::MaxPendingSpray];
 		for (int Step = 0; Step < 90; ++Step)
 		{
 			// Two lashes, 0.75 s apart.
@@ -166,6 +220,11 @@ namespace
 				Flame->VelocityCmS = FVec3();
 			}
 			Frame(Whip, Hand, FVec3(), Aim);
+			const int NumSpray = Whip.ConsumeSpray(Spray, FWaterWhip::MaxPendingSpray);
+			for (int Index = 0; Index < NumSpray; ++Index)
+			{
+				SprayKg += Spray[Index].MassKg;
+			}
 			const int Count = GWorld.FlushEvents(Dt, Events, FSimWorld::MaxFlushedEvents);
 			for (int Index = 0; Index < Count; ++Index)
 			{
@@ -174,10 +233,11 @@ namespace
 			}
 		}
 		const double Lost = MassBefore - Whip.GetMassKg(GWorld);
-		std::printf("    two lashes boiled %.1f g into steam; whip lost %.1f g; fire %s\n", SteamKg * 1000.0, Lost * 1000.0, bExtinguished ? "out" : "still burning");
+		std::printf("    two lashes boiled %.1f g into steam and flung %.0f g of spray; whip lost %.1f g; fire %s\n", SteamKg * 1000.0, SprayKg * 1000.0,
+			Lost * 1000.0, bExtinguished ? "out" : "still burning");
 		ExpectTrue("the fire went out", bExtinguished);
 		ExpectTrue("water boiled into steam", SteamKg > 0.005);
-		ExpectNear("whip lost exactly the steam it made (g)", Lost * 1000.0, SteamKg * 1000.0, 0.01);
+		ExpectNear("whip lost exactly the steam it made plus its spray (g)", Lost * 1000.0, (SteamKg + SprayKg) * 1000.0, 0.01);
 	}
 
 	void FreezeAndThaw()
@@ -224,17 +284,22 @@ namespace
 		Whip.TransferHeat(GWorld, -0.5 * Whip.GetHeatToFreeze(GWorld));
 		Frame(Whip, Hand, FVec3(), FVec3(800.0, 0.0, 140.0));
 		int Frozen = 0;
+		double FrozenKg = 0.0;
+		double LargestSegmentKg = 0.0;
 		bool bContiguous = true;
 		bool bSeenWater = false;
 		for (int Segment = 0; Segment < Whip.GetNumSegments(); ++Segment)
 		{
-			const bool bIce = GWorld.GetVolume(Whip.GetSegmentHandle(Segment))->Substance == ESubstance::Ice;
+			const FVolume* Volume = GWorld.GetVolume(Whip.GetSegmentHandle(Segment));
+			const bool bIce = Volume->Substance == ESubstance::Ice;
 			Frozen += bIce ? 1 : 0;
+			FrozenKg += bIce ? Volume->MassKg : 0.0;
+			LargestSegmentKg = KMax(LargestSegmentKg, Volume->MassKg);
 			bContiguous &= !(bIce && bSeenWater);
 			bSeenWater |= !bIce;
 		}
-		std::printf("    half the heat froze %d of %d segments\n", Frozen, Whip.GetNumSegments());
-		ExpectTrue("about half the segments froze", Frozen >= Whip.GetNumSegments() / 2 - 1 && Frozen <= Whip.GetNumSegments() / 2 + 1);
+		std::printf("    half the heat froze %.1f of 20 kg (%d of %d segments: the stream is thickest at the hand)\n", FrozenKg, Frozen, Whip.GetNumSegments());
+		ExpectNear("about half the water froze (kg)", FrozenKg, 10.0, LargestSegmentKg);
 		ExpectTrue("the frozen part starts at the hand", bContiguous && GWorld.GetVolume(Whip.GetSegmentHandle(0))->Substance == ESubstance::Ice);
 	}
 
@@ -312,6 +377,7 @@ int main()
 {
 	DrawAndHold();
 	LashCracks();
+	LashesChain();
 	ForceBudgetIsPhysical();
 	WhipPutsOutFire();
 	FreezeAndThaw();

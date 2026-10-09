@@ -176,6 +176,13 @@ void ABendingProjectile::DragAlongGround(const FVector& TargetCm, double MaxStep
 	SetActorLocation(Location);
 }
 
+void ABendingProjectile::MakeSpray(double DragTimeS)
+{
+	SprayDragTimeS = FMath::Max(DragTimeS, 0.02);
+	Mesh->SetVisibility(false);
+	Mesh->SetCastShadow(false);
+}
+
 double ABendingProjectile::GetGroundHeight(const FVector& LocationCm) const
 {
 	const ABendingSandboxArena* ArenaActor = Arena.Get();
@@ -208,6 +215,11 @@ void ABendingProjectile::Tick(float DeltaSeconds)
 	{
 		if (Kind == EBendingProjectileKind::Water)
 		{
+			if (SprayDragTimeS > 0.0)
+			{
+				// Droplets lose their speed to the air within a few metres.
+				VelocityCmS *= BendingSim::KExp(-DeltaSeconds / SprayDragTimeS);
+			}
 			VelocityCmS.Z += GetWorld()->GetGravityZ() * DeltaSeconds;
 		}
 		else if (Kind == EBendingProjectileKind::Air)

@@ -690,6 +690,11 @@ namespace BendingSandbox3D
 		{
 			if (Whip.IsActive())
 			{
+				// The move's frame data times the lash: startup draws the stream back, active frames are the strike.
+				const FTechniqueInfo& Info = GetTechniqueInfo(Technique);
+				Whip.Settings.WindupS = Info.StartupFrames / FramesPerSecond;
+				Whip.Settings.StrikeS = Info.ActiveFrames / FramesPerSecond;
+				Whip.Lash();
 				break;
 			}
 			FVec3 Source;
@@ -790,13 +795,6 @@ namespace BendingSandbox3D
 
 		switch (Technique)
 		{
-		case ETechnique::WaterWhip:
-			if (Whip.IsActive() && !bWhipCreatedThisMove)
-			{
-				Whip.Lash();
-			}
-			break;
-
 		case ETechnique::WaterFreeze:
 		{
 			const bool bThaw = Whip.IsAnyFrozen(World);
@@ -1294,9 +1292,18 @@ namespace BendingSandbox3D
 			return;
 		}
 		const FVec3 HandVelocity = (Player.HandCm - Player.PreviousHandCm) / KMax(Dt, 1e-4);
-		Whip.SetHoldExtended(PreviousSlotHeld[static_cast<int>(ETechniqueSlot::Primary)] && Player.Stance == ETechniqueElement::Water);
+		Whip.SetBodyCenter(GetChestCm());
 		Whip.SetControl(Player.HandCm, HandVelocity, Player.AimPointCm);
 		Whip.PreStep(World, &Terrain, Dt);
+
+		// Water flung off the tip at the snap flies on as spray.
+		FWhipDrop Spray[FWaterWhip::MaxPendingSpray];
+		const int Count = Whip.ConsumeSpray(Spray, FWaterWhip::MaxPendingSpray);
+		for (int Index = 0; Index < Count; ++Index)
+		{
+			SpawnProjectile(EProjectileKind::Spray, MakeWaterSpray(Spray[Index].MassKg, Spray[Index].TemperatureK, Spray[Index].LocationCm,
+				Spray[Index].VelocityCmS, Tuning.WhipSprayRadiusCm));
+		}
 	}
 
 	void FSandbox::ReleaseWhip(bool bAsBlast)
@@ -1464,7 +1471,13 @@ namespace BendingSandbox3D
 			}
 
 			case EProjectileKind::Water:
+			case EProjectileKind::Spray:
 			{
+				if (Projectile.Kind == EProjectileKind::Spray)
+				{
+					// Droplets lose their speed to the air within a few metres.
+					Projectile.VelocityCmS *= KExp(-Dt / KMax(Tuning.WhipSprayDragTimeS, 0.02));
+				}
 				Projectile.VelocityCmS.Z -= GravityCmS2 * Dt;
 				Projectile.LocationCm += Projectile.VelocityCmS * Dt;
 				const double GroundHere = Terrain.GetHeightAt(Projectile.LocationCm.X, Projectile.LocationCm.Y);

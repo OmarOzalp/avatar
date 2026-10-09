@@ -70,9 +70,6 @@ public:
 
 	ABendingWaterWhipActor* GetWaterWhip() const;
 
-	/** The whip stays stretched toward the aim while the Water Whip input is held in the water stance. */
-	bool ShouldHoldWhipExtended() const;
-
 	UFUNCTION(BlueprintPure, Category = "Bending|Techniques")
 	bool IsHoldingRock() const;
 
@@ -160,7 +157,8 @@ private:
 
 	// ---------------------------------------------------------------- Techniques
 	void BeginWaterWhip();
-	void LashWaterWhip();
+	/** Lash timed by the move's frame data: startup draws the stream back, the active frames are the strike. */
+	void LashWaterWhip(double WindupS, double StrikeS);
 	void FreezeOrThawWhip();
 	void ReleaseWhip(bool bAsBlast);
 	void BeginRockThrow(double StartupSeconds);
@@ -230,6 +228,4 @@ private:
 	FVector RockRiseTo = FVector::ZeroVector;
 	double RockRiseStartSeconds = 0.0;
 	double RockRiseSeconds = 0.3;
-	/** The whip was drawn by the current Water Whip move: its active frame must not lash yet. */
-	bool bWhipDrawnThisMove = false;
 };

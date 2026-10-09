@@ -82,7 +82,9 @@ namespace BendingSandbox3D
 		Air,
 		Water,
 		/** Flame resting on the ground, fed by a bender while held. */
-		GroundFlame
+		GroundFlame,
+		/** Water flung off a whip's tip at the snap: a cloud of droplets that falls like water but slows quickly. */
+		Spray
 	};
 
 	struct FProjectile

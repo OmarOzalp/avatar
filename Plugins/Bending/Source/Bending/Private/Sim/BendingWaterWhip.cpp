@@ -4,11 +4,17 @@ namespace BendingSim
 {
 	namespace
 	{
-		constexpr double MinSegmentRadiusCm = 2.0;
+		constexpr double MinSegmentRadiusCm = 1.0;
 		constexpr double MaxSegmentRadiusCm = 45.0;
 		constexpr int MaxSubstepsPerFrame = 16;
 		/** Below this share of the water drawn, the whip can no longer hold together. */
 		constexpr double CollapseMassFraction = 0.15;
+		/** The intended motion never asks the water to move faster than this (cm/s). */
+		constexpr double MaxTargetSpeedCmS = 6000.0;
+		/** Nothing in the chain moves faster than this (cm/s): a guard against a bad frame, not a gameplay limit. */
+		constexpr double MaxPointSpeedCmS = 12000.0;
+		/** Samples of a shape before it is resampled at even arc length. */
+		constexpr int ShapeSamples = 97;
 
 		/** Capsule radius holding MassKg at DensityKgM3 over a core of LengthCm (cylinder approximation). */
 		double SegmentRadiusFor(double MassKg, double DensityKgM3, double LengthCm)
@@ -17,9 +23,39 @@ namespace BendingSim
 			const double RadiusM = KSqrt(KMax(MassKg, 0.0) / (KMax(DensityKgM3, 1.0) * Pi * LengthM));
 			return KClamp(MToCm(RadiusM), MinSegmentRadiusCm, MaxSegmentRadiusCm);
 		}
+
+		/** Places Count points at even arc length along a sampled curve, extending past its end along the last chord. */
+		void ResampleByArcLength(const FVec3* Samples, int NumSamples, double SpacingCm, FVec3* OutPoints, int Count)
+		{
+			double Cumulative[ShapeSamples];
+			Cumulative[0] = 0.0;
+			for (int Index = 1; Index < NumSamples; ++Index)
+			{
+				Cumulative[Index] = Cumulative[Index - 1] + Distance(Samples[Index], Samples[Index - 1]);
+			}
+			int Segment = 0;
+			for (int Point = 0; Point < Count; ++Point)
+			{
+				const double Along = Point * SpacingCm;
+				while (Segment + 2 < NumSamples && Cumulative[Segment + 1] < Along)
+				{
+					++Segment;
+				}
+				const double Length = Cumulative[Segment + 1] - Cumulative[Segment];
+				const double Alpha = Length > SmallNumber ? (Along - Cumulative[Segment]) / Length : 0.0;
+				OutPoints[Point] = Samples[Segment] + (Samples[Segment + 1] - Samples[Segment]) * Alpha;
+			}
+		}
+
+		/** How far the rolling loop has travelled down the stream, from where the windup left it: it speeds up toward the snap. */
+		double StrikeFront(double Alpha, double Start)
+		{
+			const double U = KClamp(Alpha, 0.0, 1.0);
+			return Start + (1.0 - Start) * U * (0.85 + 0.15 * U);
+		}
 	}
 
-	bool FWaterWhip::Create(FSimWorld& World, const FVec3& SourceCm, const FVec3& InHandCm, double WaterMassKg, double TemperatureK)
+	bool FWaterWhip::Create(FSimWorld& World, const FVec3& InSourceCm, const FVec3& InHandCm, double WaterMassKg, double TemperatureK)
 	{
 		if (IsActive() || WaterMassKg <= 0.0)
 		{
@@ -29,25 +65,39 @@ namespace BendingSim
 		HandCm = InHandCm;
 		PreviousHandCm = InHandCm;
 		HandVelocityCmS = FVec3();
+		SourceCm = InSourceCm;
 
-		const FVec3 Away = SourceCm - InHandCm;
+		const FVec3 Away = InSourceCm - InHandCm;
 		const FVec3 Flat(Away.X, Away.Y, 0.0);
 		Forward = Flat.Size() > 1.0 ? Flat.GetSafeNormal() : FVec3(1.0, 0.0, 0.0);
 		Right = Forward.Cross(FVec3(0.0, 0.0, 1.0));
 		AimDirection = Forward;
+		StrikeDirection = Forward;
 		AimPointCm = InHandCm + Forward * Settings.LengthCm;
 
+		// The stream tapers like a whip: segment mass follows the square of the radius profile.
 		const int NumSegments = NumPoints - 1;
+		double Weights[MaxSegments];
+		double WeightSum = 0.0;
+		for (int Segment = 0; Segment < NumSegments; ++Segment)
+		{
+			const double S = (Segment + 0.5) / NumSegments;
+			const double Radius = 1.0 - (1.0 - KClamp(Settings.TipRadiusFraction, 0.05, 1.0)) * S;
+			Weights[Segment] = Radius * Radius;
+			WeightSum += Weights[Segment];
+		}
+
 		InitialSpacingCm = Away.Size() / NumSegments;
-		const double SegmentMassKg = WaterMassKg / NumSegments;
 		for (int Index = 0; Index < NumPoints; ++Index)
 		{
 			Points[Index] = InHandCm + Away * (static_cast<double>(Index) / NumSegments);
 			Velocities[Index] = FVec3();
 			BendRestCm[Index] = 0.0;
+			LashStartOffsets[Index] = FVec3();
 		}
 		for (int Segment = 0; Segment < NumSegments; ++Segment)
 		{
+			const double SegmentMassKg = WaterMassKg * Weights[Segment] / WeightSum;
 			FVolume Volume = FVolume::MakeDefault(ESubstance::Water, SegmentMassKg);
 			Volume.TemperatureK = TemperatureK;
 			Volume.Shape = EShape::Capsule;
@@ -69,9 +119,9 @@ namespace BendingSim
 		}
 
 		InitialMassKg = WaterMassKg;
-		State = EWhipState::Forming;
-		StateTimeS = 0.0;
-		LashRecoverRemainingS = 0.0;
+		NumPendingSpray = 0;
+		bHasPreviousTargets = false;
+		EnterState(EWhipState::Forming);
 		return true;
 	}
 
@@ -84,6 +134,7 @@ namespace BendingSim
 		}
 		State = EWhipState::Inactive;
 		NumPoints = 0;
+		bHasPreviousTargets = false;
 	}
 
 	void FWaterWhip::SetControl(const FVec3& InHandCm, const FVec3& InHandVelocityCmS, const FVec3& InAimPointCm)
@@ -104,18 +155,36 @@ namespace BendingSim
 		}
 	}
 
+	void FWaterWhip::SetBodyCenter(const FVec3& InBodyCenterCm)
+	{
+		BodyCenterCm = InBodyCenterCm;
+		bHasBodyCenter = true;
+	}
+
 	bool FWaterWhip::Lash()
 	{
-		if (State != EWhipState::Holding && State != EWhipState::Lashing)
+		if (State != EWhipState::Holding && State != EWhipState::Returning && State != EWhipState::Extended)
 		{
 			return false;
 		}
-		// A whip that is still stretched out stays out while the new lash runs down it.
-		LashCarry = GetLashWeight(NumPoints - 1);
-		State = EWhipState::Lashing;
-		StateTimeS = 0.0;
-		LashRecoverRemainingS = 0.0;
+		// The windup blends out of wherever the water is now, so lashes chain without a jump.
+		for (int Index = 0; Index < NumPoints; ++Index)
+		{
+			LashStartOffsets[Index] = Points[Index] - HandCm;
+		}
+		EnterState(EWhipState::Windup);
 		return true;
+	}
+
+	void FWaterWhip::EnterState(EWhipState NewState)
+	{
+		State = NewState;
+		StateTimeS = 0.0;
+		if (NewState == EWhipState::Striking)
+		{
+			PeakTipVelocityCmS = FVec3();
+			PeakTipForwardCmS = 0.0;
+		}
 	}
 
 	double FWaterWhip::GetFormProgress() const
@@ -127,36 +196,188 @@ namespace BendingSim
 		return KClamp(StateTimeS / KMax(Settings.FormSeconds, 0.01), 0.0, 1.0);
 	}
 
-	double FWaterWhip::GetLashWeight(int Index) const
+	FWaterWhip::FFrame FWaterWhip::MakeFrame() const
 	{
-		const double S = static_cast<double>(Index) / (NumPoints - 1);
-		if (State == EWhipState::Lashing)
-		{
-			// The straightening wave runs from the root (s = 0) to the tip (s = 1) and passes it at 80% of the lash.
-			const double Front = 1.25 * StateTimeS / KMax(Settings.LashDurationS, 0.01);
-			return KMax(KClamp((Front - S) / 0.2, 0.0, 1.0), LashCarry);
-		}
-		return LashRecoverRemainingS > 0.0 ? LashRecoverRemainingS / KMax(Settings.LashRecoverS, 0.01) : 0.0;
+		FFrame Frame;
+		Frame.Hand = HandCm;
+		Frame.Forward = Forward;
+		Frame.Right = Right;
+		Frame.Up = FVec3(0.0, 0.0, 1.0);
+		// Without a body, assume the hand is held out in front of the chest and to the side.
+		Frame.Body = bHasBodyCenter ? BodyCenterCm : HandCm - Forward * 45.0 - Right * 22.0;
+		return Frame;
 	}
 
-	FVec3 FWaterWhip::GetTarget(int Index, double LashBlend) const
+	void FWaterWhip::BuildReadyShape(const FFrame& Frame, FVec3* OutShape) const
 	{
-		const double S = static_cast<double>(Index) / (NumPoints - 1);
-		const double L = Settings.LengthCm;
-		const FVec3 Up(0.0, 0.0, 1.0);
+		// A loose loop around the chest, starting at the hand and sweeping across the front, round the far side and
+		// behind. It sits a little low in front (out of the line of sight) and rises behind; slow waves run along it.
+		const double LoopRadius = KMax(Settings.ReadyRadiusCm, 30.0);
+		const FVec3 Center = Frame.Body - Frame.Up * Settings.ReadyDropCm;
+		const FVec3 FromCenter = Frame.Hand - Center;
+		const double HandX = FromCenter.Dot(Frame.Forward);
+		const double HandY = FromCenter.Dot(Frame.Right);
+		const double HandRadius = KMax(KSqrt(HandX * HandX + HandY * HandY), 5.0);
+		const double HandAngle = KAtan2(HandY, HandX);
+		const double HandZ = Frame.Hand.Dot(Frame.Up);
+		const double CenterZ = Center.Dot(Frame.Up);
+		const FVec3 CenterFlat = Center - Frame.Up * CenterZ;
+		const double T = ElapsedS;
 
-		// Held: a coil in front of the bender, flowing slightly so it reads as liquid.
-		const double Ahead = L * 0.36 * KSin(0.85 * Pi * S);
-		double Lift = L * 0.20 * KSin(Pi * S) * (1.0 - 0.35 * S) + L * 0.025 * KSin(2.3 * ElapsedS + 5.1 * S);
-		double Side = L * 0.16 * KSin(1.5 * Pi * S) + L * 0.025 * KCos(1.9 * ElapsedS + 4.3 * S);
-		const FVec3 Held = HandCm + Forward * Ahead + Up * Lift + Right * Side;
-		if (LashBlend <= 0.0)
+		FVec3 Samples[ShapeSamples];
+		double Span = Settings.LengthCm / LoopRadius;
+		for (int Pass = 0; Pass < 3; ++Pass)
 		{
-			return Held;
+			double Length = 0.0;
+			for (int Index = 0; Index < ShapeSamples; ++Index)
+			{
+				const double P = static_cast<double>(Index) / (ShapeSamples - 1);
+				const double Out = KSmoothStep(0.0, 0.2, P);
+				const double Angle = HandAngle - Span * P;
+				const double Radius = HandRadius + (LoopRadius - HandRadius) * Out + 6.0 * Out * KSin(2.0 * Pi * (2.0 * P - 0.35 * T));
+				const double LoopZ = CenterZ + Settings.ReadyDropCm * (1.0 - KCos(Angle));
+				const double Z = KLerp(HandZ, LoopZ, Out) + 7.0 * Out * KSin(2.0 * Pi * (1.5 * P - 0.5 * T));
+				Samples[Index] = CenterFlat + Frame.Forward * (Radius * KCos(Angle)) + Frame.Right * (Radius * KSin(Angle)) + Frame.Up * Z;
+				if (Index > 0)
+				{
+					Length += Distance(Samples[Index], Samples[Index - 1]);
+				}
+			}
+			// Scale the sweep so the loop holds exactly the stream's length.
+			Span *= Settings.LengthCm / KMax(Length, 1.0);
 		}
-		// Lashed: a straight line from the hand to the aim.
-		const FVec3 Lashed = HandCm + AimDirection * (S * L);
-		return Held + (Lashed - Held) * LashBlend;
+		ResampleByArcLength(Samples, ShapeSamples, Settings.LengthCm / (NumPoints - 1), OutShape, NumPoints);
+	}
+
+	FVec3 FWaterWhip::GetFoldPoint(const FFrame& Frame, double S, double Front) const
+	{
+		// The stream laid out from the hand toward the strike for the part the loop has passed (s <= front); past the
+		// loop it folds back over itself, the far leg rising slightly behind. At front = 0 this is the windup (the
+		// whole stream folded back over the shoulder; the windup stops at WindupFront); at front = 1 the stream is
+		// straight out to full reach.
+		const double L = Settings.LengthCm;
+		const double Rho = KMax(Settings.LoopRadiusCm, 1.0);
+		const FVec3& D = State == EWhipState::Windup ? AimDirection : StrikeDirection;
+		FVec3 UpAcross = Frame.Up - D * Frame.Up.Dot(D);
+		UpAcross = UpAcross.Size() > 0.1 ? UpAcross.GetSafeNormal() : Frame.Forward * -1.0;
+		const FVec3 SideAcross = D.Cross(UpAcross);
+		const double Lean = Settings.StrikeLeanDeg * Pi / 180.0;
+		// SideAcross is the bender's Right when the strike is level; leaning toward it puts the loop over the hand side.
+		const FVec3 LoopUp = (UpAcross * KCos(Lean) + SideAcross * (KSin(Lean) * (SideAcross.Dot(Frame.Right) >= 0.0 ? 1.0 : -1.0))).GetSafeNormal();
+
+		if (S <= Front)
+		{
+			return Frame.Hand + D * (S * L);
+		}
+		const FVec3 Fold = Frame.Hand + D * (Front * L);
+		const double Past = (S - Front) * L;
+		const double Arc = Pi * Rho;
+		if (Past < Arc)
+		{
+			const double Angle = Past / Rho;
+			return Fold + D * (Rho * KSin(Angle)) + LoopUp * (Rho * (1.0 - KCos(Angle)));
+		}
+		// The folded-back leg angles away from the strike line as it goes back, so the drawn-back stream stays clear
+		// of the bender's head and of the camera behind them.
+		const double Back = Past - Arc;
+		const FVec3 BackDirection = (LoopUp * 0.45 - D).GetSafeNormal();
+		return Fold + LoopUp * (2.0 * Rho) + BackDirection * Back;
+	}
+
+	void FWaterWhip::ComputeTargets(FVec3* OutTargets) const
+	{
+		const FFrame Frame = MakeFrame();
+		const double Den = static_cast<double>(NumPoints - 1);
+		FVec3 Ready[MaxPoints];
+		const bool bNeedsReady = State == EWhipState::Forming || State == EWhipState::Holding || State == EWhipState::Returning;
+		if (bNeedsReady)
+		{
+			BuildReadyShape(Frame, Ready);
+		}
+
+		for (int Index = 0; Index < NumPoints; ++Index)
+		{
+			const double S = Index / Den;
+			switch (State)
+			{
+			case EWhipState::Forming:
+			{
+				// Root first: the water nearest the hand arrives first; the tail arcs up out of the pond after it.
+				const double U = GetFormProgress();
+				const double W = KSmoothStep(0.0, 1.0, (U - 0.45 * S) / 0.55);
+				const FVec3 Strung = Frame.Hand + (SourceCm - Frame.Hand) * S;
+				OutTargets[Index] = Strung + (Ready[Index] - Strung) * W + Frame.Up * (90.0 * KSin(Pi * W) * S);
+				break;
+			}
+			case EWhipState::Holding:
+				OutTargets[Index] = Ready[Index];
+				break;
+			case EWhipState::Windup:
+			{
+				const double W = KSmoothStep(0.0, 1.0, StateTimeS / KMax(Settings.WindupS, 0.01));
+				const FVec3 From = Frame.Hand + LashStartOffsets[Index];
+				OutTargets[Index] = From + (GetFoldPoint(Frame, S, KClamp(Settings.WindupFront, 0.0, 0.9)) - From) * W;
+				break;
+			}
+			case EWhipState::Striking:
+				OutTargets[Index] = GetFoldPoint(Frame, S, StrikeFront(StateTimeS / KMax(Settings.StrikeS, 0.01), KClamp(Settings.WindupFront, 0.0, 0.9)));
+				break;
+			case EWhipState::Extended:
+				OutTargets[Index] = GetFoldPoint(Frame, S, 1.0);
+				break;
+			case EWhipState::Returning:
+			{
+				// Root first again; the tail is drawn back last, arcing up over the stream as it comes.
+				const double U = StateTimeS / KMax(Settings.ReturnS, 0.01);
+				const double W = KSmoothStep(0.0, 1.0, (U - 0.4 * S) / 0.6);
+				const FVec3 Out = GetFoldPoint(Frame, S, 1.0);
+				OutTargets[Index] = Out + (Ready[Index] - Out) * W + Frame.Up * (70.0 * KSin(Pi * W) * (0.3 + 0.7 * S));
+				break;
+			}
+			default:
+				OutTargets[Index] = Points[Index];
+				break;
+			}
+		}
+		OutTargets[0] = Frame.Hand;
+	}
+
+	double FWaterWhip::GetPointStiffness(int Index) const
+	{
+		double Stiffness = Settings.ReadyStiffness;
+		switch (State)
+		{
+		case EWhipState::Forming:
+			Stiffness = Settings.ReadyStiffness * (0.5 + 0.5 * GetFormProgress());
+			break;
+		case EWhipState::Windup:
+		case EWhipState::Striking:
+		case EWhipState::Extended:
+			Stiffness = Settings.LashStiffness;
+			break;
+		case EWhipState::Returning:
+			Stiffness = KLerp(Settings.LashStiffness, Settings.ReadyStiffness, KSmoothStep(0.0, 1.0, StateTimeS / KMax(Settings.ReturnS, 0.01)));
+			break;
+		default:
+			break;
+		}
+		// Ice is moved as a rigid piece by its frozen joints, not pulled point by point.
+		const bool bFrozen = (Index >= 1 && BendRestCm[Index - 1] > 0.0) || (Index >= 2 && BendRestCm[Index - 2] > 0.0);
+		return bFrozen ? Stiffness * 0.3 : Stiffness;
+	}
+
+	double FWaterWhip::GetPointDampingRatio() const
+	{
+		switch (State)
+		{
+		case EWhipState::Windup:
+		case EWhipState::Striking:
+		case EWhipState::Extended:
+		case EWhipState::Returning:
+			return Settings.LashDampingRatio;
+		default:
+			return Settings.ReadyDampingRatio;
+		}
 	}
 
 	void FWaterWhip::PreStep(FSimWorld& World, const FTerrain* Terrain, double DeltaSeconds)
@@ -167,23 +388,74 @@ namespace BendingSim
 		}
 		ElapsedS += DeltaSeconds;
 		StateTimeS += DeltaSeconds;
-		LashRecoverRemainingS = KMax(LashRecoverRemainingS - DeltaSeconds, 0.0);
-		if (State == EWhipState::Forming && StateTimeS >= Settings.FormSeconds)
+		switch (State)
 		{
-			State = EWhipState::Holding;
-			StateTimeS = 0.0;
+		case EWhipState::Forming:
+			if (StateTimeS >= Settings.FormSeconds)
+			{
+				EnterState(EWhipState::Holding);
+			}
+			break;
+		case EWhipState::Windup:
+			if (StateTimeS >= Settings.WindupS)
+			{
+				// The strike line is fixed now, so the lash lands where it was aimed.
+				StrikeDirection = AimDirection;
+				EnterState(EWhipState::Striking);
+			}
+			break;
+		case EWhipState::Striking:
+			if (StateTimeS >= Settings.StrikeS)
+			{
+				FlingSpray(World);
+				EnterState(EWhipState::Extended);
+			}
+			break;
+		case EWhipState::Extended:
+			if (StateTimeS >= Settings.ExtendedS)
+			{
+				EnterState(EWhipState::Returning);
+			}
+			break;
+		case EWhipState::Returning:
+			if (StateTimeS >= Settings.ReturnS)
+			{
+				EnterState(EWhipState::Holding);
+			}
+			break;
+		default:
+			break;
 		}
-		else if (State == EWhipState::Lashing && StateTimeS >= Settings.LashDurationS && !bHoldExtended)
+
+		FVec3 Targets[MaxPoints];
+		ComputeTargets(Targets);
+		if (!bHasPreviousTargets)
 		{
-			State = EWhipState::Holding;
-			StateTimeS = 0.0;
-			LashRecoverRemainingS = Settings.LashRecoverS;
+			for (int Index = 0; Index < NumPoints; ++Index)
+			{
+				PreviousTargets[Index] = Targets[Index];
+			}
+		}
+		FVec3 TargetVelocities[MaxPoints];
+		double Stiffness[MaxPoints] = {};
+		double Damping[MaxPoints] = {};
+		const double DampingRatio = GetPointDampingRatio();
+		for (int Index = 1; Index < NumPoints; ++Index)
+		{
+			FVec3 Velocity = (Targets[Index] - PreviousTargets[Index]) / DeltaSeconds;
+			const double Speed = Velocity.Size();
+			if (Speed > MaxTargetSpeedCmS)
+			{
+				Velocity *= MaxTargetSpeedCmS / Speed;
+			}
+			TargetVelocities[Index] = Velocity;
+			Stiffness[Index] = GetPointStiffness(Index);
+			Damping[Index] = 2.0 * DampingRatio * KSqrt(Stiffness[Index]);
 		}
 
 		const double FormProgress = GetFormProgress();
 		const double SpacingCm = Settings.LengthCm / (NumPoints - 1);
 		const double RestCm = State == EWhipState::Forming ? KLerp(InitialSpacingCm, SpacingCm, FormProgress) : SpacingCm;
-		const double GainScale = State == EWhipState::Forming ? 0.25 + 0.75 * FormProgress : 1.0;
 		const double MaxAccelerationCmS2 = MToCm(Settings.MaxControlAccelerationMs2);
 		const FVec3 Gravity(0.0, 0.0, World.Settings.GravityZCmS2);
 
@@ -191,29 +463,17 @@ namespace BendingSim
 		NumSubsteps = NumSubsteps > MaxSubstepsPerFrame ? MaxSubstepsPerFrame : NumSubsteps;
 		const double H = DeltaSeconds / NumSubsteps;
 
-		FVec3 Targets[MaxPoints];
-		double Gains[MaxPoints] = {};
-		for (int Index = 1; Index < NumPoints; ++Index)
-		{
-			const double Lash = GetLashWeight(Index);
-			Targets[Index] = GetTarget(Index, Lash);
-			Gains[Index] = Settings.ShapeStiffness * GainScale * (1.0 + (Settings.LashStiffnessScale - 1.0) * Lash);
-		}
-
 		FVec3 Predicted[MaxPoints];
 		for (int Substep = 0; Substep < NumSubsteps; ++Substep)
 		{
 			const double Alpha = static_cast<double>(Substep + 1) / NumSubsteps;
-			const FVec3 Hand = PreviousHandCm + (HandCm - PreviousHandCm) * Alpha;
-			const FVec3 HandOffset = Hand - HandCm;
-
-			Predicted[0] = Hand;
+			Predicted[0] = PreviousHandCm + (HandCm - PreviousHandCm) * Alpha;
 			for (int Index = 1; Index < NumPoints; ++Index)
 			{
-				// The bender's force: spring toward the intended shape, damping relative to the hand, gravity
-				// cancelled; all of it capped at what the bender can exert. Gravity then acts in full.
-				const FVec3 Error = Targets[Index] + HandOffset - Points[Index];
-				FVec3 Control = Error * Gains[Index] - (Velocities[Index] - HandVelocityCmS) * Settings.ShapeDamping - Gravity;
+				// The bender's force: a spring-damper along the intended motion (position and velocity), gravity
+				// cancelled, all of it capped at what the bender can exert. Gravity then acts in full.
+				const FVec3 Target = PreviousTargets[Index] + (Targets[Index] - PreviousTargets[Index]) * Alpha;
+				FVec3 Control = (Target - Points[Index]) * Stiffness[Index] + (TargetVelocities[Index] - Velocities[Index]) * Damping[Index] - Gravity;
 				const double ControlSize = Control.Size();
 				if (ControlSize > MaxAccelerationCmS2)
 				{
@@ -270,6 +530,19 @@ namespace BendingSim
 				}
 			}
 
+			// Water stretches only so far: from the hand out, no segment may exceed MaxStretch of its rest length.
+			// A stream pulled tight therefore stops dead instead of stretching, which is the whip's snap.
+			const double MaxLengthCm = RestCm * KMax(Settings.MaxStretch, 1.0);
+			for (int Segment = 0; Segment + 1 < NumPoints; ++Segment)
+			{
+				const FVec3 Delta = Predicted[Segment + 1] - Predicted[Segment];
+				const double Length = Delta.Size();
+				if (Length > MaxLengthCm)
+				{
+					Predicted[Segment + 1] = Predicted[Segment] + Delta * (MaxLengthCm / Length);
+				}
+			}
+
 			if (Terrain)
 			{
 				for (int Index = 1; Index < NumPoints; ++Index)
@@ -285,12 +558,87 @@ namespace BendingSim
 
 			for (int Index = 0; Index < NumPoints; ++Index)
 			{
-				Velocities[Index] = (Predicted[Index] - Points[Index]) / H;
+				FVec3 Velocity = (Predicted[Index] - Points[Index]) / H;
+				const double Speed = Velocity.Size();
+				if (Speed > MaxPointSpeedCmS)
+				{
+					Velocity *= MaxPointSpeedCmS / Speed;
+				}
+				Velocities[Index] = Velocity;
 				Points[Index] = Predicted[Index];
 			}
 		}
+		for (int Index = 0; Index < NumPoints; ++Index)
+		{
+			PreviousTargets[Index] = Targets[Index];
+		}
+		bHasPreviousTargets = true;
 		PreviousHandCm = HandCm;
 		SyncVolumes(World);
+
+		if (State == EWhipState::Striking)
+		{
+			// Track the crack: the moment the last quarter of the stream moves fastest along the strike.
+			const int First = (GetNumSegments() * 3) / 4 + 1;
+			FVec3 Sum;
+			for (int Index = First; Index < NumPoints; ++Index)
+			{
+				Sum += Velocities[Index];
+			}
+			const FVec3 Average = Sum / KMax(NumPoints - First, 1);
+			const double Along = Average.Dot(StrikeDirection);
+			if (Along > PeakTipForwardCmS)
+			{
+				PeakTipForwardCmS = Along;
+				PeakTipVelocityCmS = Average;
+			}
+		}
+	}
+
+	void FWaterWhip::FlingSpray(FSimWorld& World)
+	{
+		if (Settings.SprayFraction <= 0.0 || NumPendingSpray >= MaxPendingSpray)
+		{
+			return;
+		}
+		// The tip's water keeps going when the stream stops: a share of the last quarter breaks away at the crack and
+		// flies on at the speed it had then, carrying its heat. Ice does not spray.
+		const int First = (GetNumSegments() * 3) / 4;
+		double MassKg = 0.0;
+		double HeatWeighted = 0.0;
+		for (int Segment = First; Segment < GetNumSegments(); ++Segment)
+		{
+			FVolume* Volume = World.GetVolume(Segments[Segment]);
+			if (!Volume || World.IsDepleted(Segments[Segment]) || Volume->Substance != ESubstance::Water)
+			{
+				continue;
+			}
+			const double Shed = Volume->MassKg * KClamp(Settings.SprayFraction, 0.0, 0.5);
+			Volume->MassKg -= Shed;
+			MassKg += Shed;
+			HeatWeighted += Shed * Volume->TemperatureK;
+		}
+		if (MassKg <= 1e-6)
+		{
+			return;
+		}
+		FWhipDrop& Drop = PendingSpray[NumPendingSpray++];
+		Drop.MassKg = MassKg;
+		Drop.TemperatureK = HeatWeighted / MassKg;
+		Drop.VelocityCmS = PeakTipVelocityCmS;
+		Drop.LocationCm = Points[NumPoints - 1];
+		Drop.Substance = ESubstance::Water;
+	}
+
+	int FWaterWhip::ConsumeSpray(FWhipDrop* OutDrops, int MaxDrops)
+	{
+		int Count = 0;
+		for (int Index = 0; Index < NumPendingSpray && Count < MaxDrops; ++Index)
+		{
+			OutDrops[Count++] = PendingSpray[Index];
+		}
+		NumPendingSpray = 0;
+		return Count;
 	}
 
 	void FWaterWhip::SyncVolumes(FSimWorld& World)
@@ -446,7 +794,6 @@ namespace BendingSim
 		const double Sign = HeatJ < 0.0 ? -1.0 : 1.0;
 		double Remaining = Sign * HeatJ;
 		double Accepted = 0.0;
-		double TotalMass = 0.0;
 		for (int Segment = 0; Segment < GetNumSegments() && Remaining > 0.0; ++Segment)
 		{
 			const FVolume* Volume = World.GetVolume(Segments[Segment]);
@@ -454,7 +801,6 @@ namespace BendingSim
 			{
 				continue;
 			}
-			TotalMass += Volume->MassKg;
 			const double Need = Sign < 0.0 ? HeatToFreeze(*Volume) : HeatToMelt(*Volume);
 			const double Portion = KMin(Need, Remaining);
 			if (Portion > 0.0)
@@ -467,7 +813,7 @@ namespace BendingSim
 		}
 		if (Remaining > 0.0)
 		{
-			TotalMass = 0.0;
+			double TotalMass = 0.0;
 			for (int Segment = 0; Segment < GetNumSegments(); ++Segment)
 			{
 				TotalMass += GetSegmentMassKg(World, Segment);
@@ -490,6 +836,12 @@ namespace BendingSim
 	int FWaterWhip::Release(FSimWorld& World, FWhipDrop* OutDrops, int MaxDrops)
 	{
 		int Count = 0;
+		// Spray not yet collected by the owner goes out with the rest.
+		for (int Index = 0; Index < NumPendingSpray && Count < MaxDrops; ++Index)
+		{
+			OutDrops[Count++] = PendingSpray[Index];
+		}
+		NumPendingSpray = 0;
 		for (int Segment = 0; Segment < GetNumSegments(); ++Segment)
 		{
 			const FVolume* Volume = World.GetVolume(Segments[Segment]);

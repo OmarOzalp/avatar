@@ -12,8 +12,8 @@ namespace BendingSim
 		//     element, slot, startup / active / recovery frames, chi, stamina, hold
 		const FTechniqueInfo GTechniques[] = {
 			{ TechId::None, "", "", TechElem::None, TechSlot::Primary, 1, 1, 0, 0.0, 0.0, false },
-			{ TechId::WaterWhip, "Water Whip", "Draw water from a pond within 15 m. Press to lash; keep holding to keep it stretched toward the aim.",
-				TechElem::Water, TechSlot::Primary, 10, 4, 14, 6.0, 4.0, false },
+			{ TechId::WaterWhip, "Water Whip", "Draw water from a pond within 15 m; it circles you. Press to lash: it snaps out to the aim and flows back.",
+				TechElem::Water, TechSlot::Primary, 8, 14, 16, 6.0, 4.0, false },
 			{ TechId::WaterFreeze, "Freeze / Thaw", "Pull the heat out of the whip to turn it to ice, or put it back.",
 				TechElem::Water, TechSlot::Secondary, 16, 3, 12, 4.0, 2.0, false },
 			{ TechId::WaterRelease, "Release", "Let the water fall: it soaks into the ground and turns soil to mud.",
@@ -102,6 +102,14 @@ namespace BendingSim
 		Water.LocationCm = LocationCm;
 		Water.VelocityCmS = VelocityCmS;
 		return Water;
+	}
+
+	FVolume MakeWaterSpray(double MassKg, double TemperatureK, const FVec3& LocationCm, const FVec3& VelocityCmS, double RadiusCm)
+	{
+		FVolume Spray = MakeWaterBall(MassKg, TemperatureK, LocationCm, VelocityCmS);
+		Spray.bDeriveRadiusFromMass = false;
+		Spray.RadiusCm = KMax(RadiusCm, Spray.RadiusCm);
+		return Spray;
 	}
 
 	FVolume MakeRock(double MassKg, double DensityKgM3, const FVec3& LocationCm, const FVec3& VelocityCmS)

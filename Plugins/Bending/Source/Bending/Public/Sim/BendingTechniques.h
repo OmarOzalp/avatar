@@ -90,6 +90,10 @@ namespace BendingSim
 		double WhipWaterKg = 20.0;
 		/** Farthest a water source may be from the bender's hand (cm). */
 		double WhipDrawRangeCm = 1500.0;
+		/** Spread of the droplet cloud a whip flings off at the snap (cm): spray has far more surface than a ball. */
+		double WhipSprayRadiusCm = 30.0;
+		/** Time for spray to lose most of its speed to air drag (s). */
+		double WhipSprayDragTimeS = 0.25;
 		double WaterBlastSpeedMs = 22.0;
 
 		// ---------------------------------------------------------------- Earth
@@ -153,6 +157,8 @@ namespace BendingSim
 	/** Compressed air: density = Compression * ambient, filling a sphere of RadiusCm. */
 	BENDINGSIM_API FVolume MakeBentAir(double RadiusCm, double Compression, double AmbientDensityKgM3, const FVec3& LocationCm, const FVec3& VelocityCmS);
 	BENDINGSIM_API FVolume MakeWaterBall(double MassKg, double TemperatureK, const FVec3& LocationCm, const FVec3& VelocityCmS);
+	/** Spray: water spread into droplets over a cloud of RadiusCm, so it exchanges heat over far more surface than a ball. */
+	BENDINGSIM_API FVolume MakeWaterSpray(double MassKg, double TemperatureK, const FVec3& LocationCm, const FVec3& VelocityCmS, double RadiusCm);
 	/** A rock of compacted earth (porosity 0.25: it soaks a little, it can turn to mud). */
 	BENDINGSIM_API FVolume MakeRock(double MassKg, double DensityKgM3, const FVec3& LocationCm, const FVec3& VelocityCmS);
 
