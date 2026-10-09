@@ -80,6 +80,27 @@ body {
   text-wrap: balance;
 }
 #brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+#goals { margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; font-size: 12px; color: var(--muted); }
+#goals .head { grid-column: 1 / -1; font-family: var(--font-display); font-size: 13px; letter-spacing: 0.04em; color: var(--ink); margin-bottom: 2px; }
+#goals .goal::before { content: '\25CB'; margin-right: 6px; color: var(--muted); }
+#goals .goal.done { color: var(--ink); }
+#goals .goal.done::before { content: '\2714'; color: #6fdc6a; }
+.float.dmg { color: #fff3c4; font-size: 18px; }
+.float.dmg.big { color: #ffb347; font-size: 26px; }
+.float.dmg.huge { color: #ff6a3d; font-size: 34px; }
+.float.ko { color: #ffe066; font-size: 30px; }
+.hpbar { position: absolute; width: 64px; height: 8px; margin-left: -32px; border-radius: 4px; background: rgba(20, 14, 10, 0.75); box-shadow: 0 0 0 2px rgba(20, 14, 10, 0.75); overflow: hidden; pointer-events: none; transition: opacity 0.3s; }
+.hpbar i { position: absolute; inset: 0; transform-origin: left; background: linear-gradient(90deg, #ff5a3c, #ffd84a 60%, #8ae65a); }
+.hpbar b { position: absolute; inset: 0; transform-origin: left; background: rgba(255, 255, 255, 0.85); }
+#combo { top: 38%; right: 9%; text-align: right; font-family: var(--font-display); color: #fff; opacity: 0; transition: opacity 0.25s;
+  text-shadow: 0 3px 0 #1a120c, 3px 0 0 #1a120c, -3px 0 0 #1a120c, 0 -3px 0 #1a120c, 0 6px 14px rgba(0,0,0,0.5); }
+#combo .count { font-size: 46px; line-height: 1; color: #ffd84a; }
+#combo .label { font-size: 18px; letter-spacing: 0.08em; }
+#combo.bump .count { animation: pop 0.25s cubic-bezier(.2,1.6,.4,1); }
+#toast { top: 22%; left: 50%; transform: translateX(-50%); padding: 10px 18px; text-align: center; opacity: 0; transition: opacity 0.3s; }
+#toast .label { display: block; color: #6fdc6a; }
+#toast .what { font-family: var(--font-display); font-size: 20px; letter-spacing: 0.02em; }
+#toast.show { opacity: 1; animation: pop 0.4s cubic-bezier(.2,1.6,.4,1); }
 
 #stances {
   top: calc(14px + env(safe-area-inset-top, 0px));
@@ -321,6 +342,9 @@ body {
 }
 @media (max-width: 720px) {
   #brand p { display: none; }
+  #goals { grid-template-columns: 1fr; }
+  #goals .goal { display: none; }
+  #combo .count { font-size: 34px; }
   #brand h1 { font-size: 16px; }
   #stances { top: calc(62px + env(safe-area-inset-top, 0px)); left: 16px; right: 16px; justify-content: space-between; gap: 2px; }
   .stance { padding: 5px 6px; font-size: 12px; gap: 5px; }
@@ -348,7 +372,10 @@ body {
   <div id="brand" class="panel">
     <h1>Bending Training Ground</h1>
     <p>The Avatar plugin's C++ physics, compiled to WebAssembly: real mass, heat and soil, all four elements.</p>
+    <div id="goals" aria-label="Training goals"></div>
   </div>
+  <div id="combo" aria-hidden="true"><div class="count">x2</div><div class="label">COMBO</div></div>
+  <div id="toast" class="panel" role="status"><span class="label">Goal complete</span><span class="what"></span></div>
   <div id="stances" class="panel" role="group" aria-label="Stance"></div>
   <div id="log"></div>
   <div id="crosshair" aria-hidden="true"></div>
@@ -439,8 +466,8 @@ const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E', 'F'];
 const SUB = { EARTH: 1, WATER: 2, ICE: 3, STEAM: 4, FIRE: 5, AIR: 6 };
 const PROP = { STONE: 0, ROCK: 1, BOULDER: 2, CLOD: 3, DUMMY: 4, BRAZIER: 5, ICE: 6, BANNER: 7, LANTERN: 8, STRAW: 9, CRATE: 10, BARREL: 11 };
 // Bodies as packed by sb_pack_bodies: 21 kinematic fields, then burn state, burnt and heat fractions, wetness, water
-// held, yaw and variant.
-const BODY_STRIDE = 28;
+// held, yaw, variant, a dummy's health (0..1) and seconds left knocked out.
+const BODY_STRIDE = 30;
 const PROJ = { FIRE: 0, AIR: 1, WATER: 2, GROUND_FLAME: 3, SPRAY: 4, ICE_SHARD: 5 };
 const REACTION = ['None', 'Evaporation', 'Condensation', 'Melting', 'Freezing', 'Oxygenation', 'Saturation', 'MudFormed', 'Deflection', 'Erosion', 'Extinguished'];
 const SHORT_NAMES = { 'Water Whip': 'Whip', 'Freeze / Thaw': 'Freeze', 'Release': 'Release', 'Water Blast': 'Throw', 'Rock Throw': 'Rock',
@@ -1115,50 +1142,130 @@ function start() {
     return g;
   }
 
-  // ---------------------------------------------------------------- The bender: a cartoon martial artist
-  const skin = toon(0xf0b98c), cloth = toon(0x3a3550), shirt = toon(ELEMENTS[2].hex), trim = toon(ELEMENTS[2].hex), sash = toon(0xf1e7cf), hair = toon(0x2a1d16, null, 0.1), boots = toon(0x4a3426);
+  // ---------------------------------------------------------------- The bender: a cartoon martial artist in their nation's clothes
+  // The same rig (pelvis, spine, neck, head, arms, legs) for every stance; switching stance changes into that
+  // nation's outfit: Water Tribe parka with fur trim, Earth Kingdom green and tan, Fire Nation red and gold with
+  // shoulder guards and a topknot crown, Air Nomad yellow and orange with the arrow.
+  const OUTFITS = {
+    2: { tunic: 0x2f74c0, trim: 0xf6f2ea, belt: 0x1e3f73, pants: 0x29365a, boots: 0x6a5240, wrap: 0xe9e1cf, fur: true },
+    1: { tunic: 0x4f8f3c, trim: 0xdcc58c, belt: 0x6b4a2e, pants: 0x5c5a33, boots: 0x4a3426, wrap: 0xdcc58c, collar: true },
+    3: { tunic: 0xb8322a, trim: 0xe6b53c, belt: 0x241614, pants: 0x2d1d1e, boots: 0x1d1514, wrap: 0x2b1a17, collar: true, pads: true, crown: true },
+    4: { tunic: 0xf3b12e, trim: 0xd9622b, belt: 0xd9622b, pants: 0xf0b33a, boots: 0x7a4a2a, wrap: 0xd9622b, collar: true, mantle: true, arrow: true, bald: true },
+  };
+  const skin = toon(0xf0b98c), tunic = toon(OUTFITS[2].tunic), trimMat = toon(OUTFITS[2].trim, null, 0.3), beltMat = toon(OUTFITS[2].belt);
+  const pants = toon(OUTFITS[2].pants), boots = toon(OUTFITS[2].boots), wrapMat = toon(OUTFITS[2].wrap), hair = toon(0x2a1d16, null, 0.1);
+  const furMat = toon(0xf7f4ee, null, 0.4), goldMat = toon(0xf0c24a, null, 0.45), padMat = toon(0x5a1612, null, 0.25);
+  const arrowMat = new THREE.MeshBasicMaterial({ color: lin(0x3aa0e8) });
   const eyeMat = new THREE.MeshBasicMaterial({ color: lin(0x15110e) }), shineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const eyeWhite = new THREE.MeshBasicMaterial({ color: lin(0xfbf8f2) }), irisMat = new THREE.MeshBasicMaterial({ color: lin(0x4a2c1a) });
+  const mouthMat = new THREE.MeshBasicMaterial({ color: lin(0x6a2a22) }), cheekMat = new THREE.MeshBasicMaterial({ color: lin(0xf0907a), transparent: true, opacity: 0.4, depthWrite: false });
+  const outfitParts = { fur: [], collar: [], pads: [], crown: [], mantle: [], arrow: [], hair: [] };
+  const part = (group, mesh) => { outfitParts[group].push(mesh); return mesh; };
   const human = new THREE.Group();
   const body = new THREE.Group(); human.add(body);               // squash and stretch about the feet
   const pelvis = new THREE.Group(); pelvis.position.y = 0.88; body.add(pelvis);
-  inked(new THREE.SphereGeometry(0.2, 16, 10).scale(0.75, 0.55, 1.0), cloth, pelvis, 0, 0.02, 0);
+  inked(new THREE.SphereGeometry(0.2, 16, 10).scale(0.75, 0.55, 1.0), pants, pelvis, 0, 0.02, 0);
   const spine = new THREE.Group(); spine.position.y = 0.04; pelvis.add(spine);
-  const tunicGeo = new THREE.LatheGeometry([[0.001, -0.02], [0.19, -0.02], [0.215, 0.07], [0.2, 0.2], [0.225, 0.4], [0.25, 0.5], [0.2, 0.58], [0.09, 0.62], [0.001, 0.63]].map(([r, y]) => new THREE.Vector2(r, y)), 16).scale(0.72, 1, 1);
+  // Torso: broad shoulders tapering to the belt, and a short flared hem over the hips.
+  const tunicGeo = new THREE.LatheGeometry([[0.001, -0.02], [0.19, -0.02], [0.205, 0.07], [0.195, 0.2], [0.225, 0.38], [0.262, 0.5], [0.215, 0.58], [0.1, 0.62], [0.001, 0.63]].map(([r, y]) => new THREE.Vector2(r, y)), 18).scale(0.72, 1, 1);
   tunicGeo.computeVertexNormals();
-  inked(tunicGeo, shirt, spine);
-  inked(new THREE.TorusGeometry(0.205, 0.035, 8, 24).rotateX(Math.PI / 2).scale(0.74, 1, 1.02), sash, spine, 0, 0.07, 0);
+  inked(tunicGeo, tunic, spine);
+  const hemGeo = new THREE.LatheGeometry([[0.205, 0.05], [0.215, -0.04], [0.245, -0.13], [0.255, -0.16]].map(([r, y]) => new THREE.Vector2(r, y)), 18, 0, Math.PI * 2).scale(0.74, 1, 1);
+  hemGeo.computeVertexNormals();
+  const hem = new THREE.Mesh(hemGeo, tunic); hem.material.side = THREE.DoubleSide; spine.add(hem);
+  part('collar', inked(new THREE.TorusGeometry(0.25, 0.018, 6, 28).rotateX(Math.PI / 2).scale(0.74, 1, 1.02), trimMat, spine, 0, -0.155, 0));
+  part('fur', inked(new THREE.TorusGeometry(0.25, 0.04, 8, 28).rotateX(Math.PI / 2).scale(0.74, 1, 1.02), furMat, spine, 0, -0.15, 0));
+  // Belt or sash, with two tails hanging at the back that swing as the bender moves.
+  inked(new THREE.TorusGeometry(0.205, 0.035, 8, 24).rotateX(Math.PI / 2).scale(0.74, 1, 1.02), beltMat, spine, 0, 0.07, 0);
+  const sashTails = new THREE.Group(); sashTails.position.set(-0.15, 0.06, 0); spine.add(sashTails);
+  for (const z of [-0.045, 0.045]) { const tail = inked(new THREE.BoxGeometry(0.018, 0.26, 0.06).translate(0, -0.13, 0), beltMat, sashTails, 0, 0, z); tail.rotation.x = z * 2; }
+  // Collar: a trimmed neckline, or a fur ruff for the Water Tribe parka.
+  part('collar', inked(new THREE.TorusGeometry(0.105, 0.022, 6, 20).rotateX(Math.PI / 2).scale(0.85, 1, 1.05), trimMat, spine, 0.005, 0.585, 0));
+  part('fur', inked(new THREE.TorusGeometry(0.12, 0.05, 8, 20).rotateX(Math.PI / 2).scale(0.9, 1, 1.05), furMat, spine, 0, 0.575, 0));
+  // Fire Nation shoulder guards; the Air Nomad's shawl.
+  for (const z of [-1, 1]) {
+    const pad = part('pads', inked(new THREE.SphereGeometry(0.105, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.6, 1.15), padMat, spine, 0, 0.53, z * 0.215));
+    pad.rotation.x = -z * 0.35;
+    part('pads', inked(new THREE.TorusGeometry(0.105, 0.012, 4, 20).rotateX(Math.PI / 2).scale(1, 1, 1.15), goldMat, pad, 0, 0.005, 0));
+  }
+  const mantleGeo = new THREE.LatheGeometry([[0.11, 0.06], [0.2, 0.0], [0.29, -0.09], [0.3, -0.12]].map(([r, y]) => new THREE.Vector2(r, y)), 20).scale(0.8, 1, 1);
+  mantleGeo.computeVertexNormals();
+  const mantleMat = toon(OUTFITS[4].trim); mantleMat.side = THREE.DoubleSide;
+  part('mantle', inked(mantleGeo, mantleMat, spine, 0, 0.56, 0));
   const neck = new THREE.Group(); neck.position.y = 0.62; spine.add(neck);
+  inked(new THREE.CylinderGeometry(0.055, 0.06, 0.08, 10), skin, neck, 0, 0.03, 0);
   const head = new THREE.Group(); head.position.y = 0.17; neck.add(head);
-  inked(new THREE.SphereGeometry(0.17, 22, 16).scale(0.95, 1.04, 1.0), skin, head);
-  inked(new THREE.SphereGeometry(0.182, 22, 12, 0, Math.PI * 2, 0, Math.PI * 0.52).rotateZ(0.42), hair, head, -0.015, 0.012, 0);
-  inked(new THREE.SphereGeometry(0.06, 12, 10), hair, head, -0.13, 0.13, 0);
-  const band = inked(new THREE.TorusGeometry(0.168, 0.02, 6, 28).rotateX(Math.PI / 2).rotateZ(0.32), trim, head, 0, 0.05, 0);
+  inked(new THREE.SphereGeometry(0.17, 24, 18).scale(0.96, 1.04, 1.0), skin, head);
+  for (const z of [-1, 1]) inked(new THREE.SphereGeometry(0.038, 10, 8).scale(0.6, 1, 0.5), skin, head, -0.005, -0.005, z * 0.165);
+  inked(new THREE.SphereGeometry(0.02, 8, 6).scale(1.1, 0.9, 1), skin, head, 0.168, -0.025, 0);
+  // Hair: a cap, a spiky fringe and a topknot (the Fire Nation's crowned); the Air Nomad shaves and wears the arrow.
+  const hairGroup = new THREE.Group(); head.add(hairGroup); part('hair', hairGroup);
+  inked(new THREE.SphereGeometry(0.182, 22, 12, 0, Math.PI * 2, 0, Math.PI * 0.5).rotateZ(0.38), hair, hairGroup, -0.012, 0.014, 0);
+  // A fringe of locks sweeping forward over the brow, and a few swept back behind (no tufts sticking up).
+  const lockGeo = new THREE.ConeGeometry(0.05, 0.13, 6).translate(0, 0.05, 0);
+  [[0.115, 0.105, 0, -2.05, 0], [0.105, 0.1, 0.075, -1.95, 0.35], [0.105, 0.1, -0.075, -1.95, -0.35], [0.05, 0.13, 0.12, -1.25, 0.9], [0.05, 0.13, -0.12, -1.25, -0.9],
+    [-0.13, 0.09, 0.07, 1.85, 0.3], [-0.13, 0.09, -0.07, 1.85, -0.3], [-0.15, 0.04, 0, 2.05, 0]].forEach(([x, y, z, tilt, twist]) => {
+    const lock = inked(lockGeo, hair, hairGroup, x, y, z);
+    lock.rotation.set(twist, 0, tilt);
+    lock.scale.set(1, 1, 0.75);
+  });
+  inked(new THREE.SphereGeometry(0.06, 12, 10), hair, hairGroup, -0.12, 0.14, 0);
+  const crown = new THREE.Group(); crown.position.set(-0.12, 0.2, 0); hairGroup.add(crown); part('crown', crown);
+  inked(new THREE.ConeGeometry(0.03, 0.09, 5), goldMat, crown, 0, 0.02, 0);
+  for (const z of [-1, 1]) { const f = inked(new THREE.ConeGeometry(0.018, 0.06, 5), goldMat, crown, 0, -0.005, z * 0.03); f.rotation.x = -z * 0.5; }
+  // The Air Nomad arrow: a line over the crown of the head down to a point on the forehead.
+  const arrowLine = part('arrow', new THREE.Mesh(new THREE.TorusGeometry(0.1725, 0.013, 4, 24, 2.3), arrowMat));
+  arrowLine.rotation.set(0, 0, 0.42); head.add(arrowLine);
+  const arrowHead = part('arrow', new THREE.Mesh(new THREE.ConeGeometry(0.038, 0.07, 3), arrowMat));
+  arrowHead.position.set(0.155, 0.08, 0); arrowHead.rotation.set(0, 0, 2.2); arrowHead.scale.set(1, 1, 0.35); head.add(arrowHead);
+  // Face: big cartoon eyes with highlights, brows, a small smile, rosy cheeks.
+  const band = new THREE.Group();
   const eyes = new THREE.Group(); head.add(eyes);
   for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8).scale(0.55, 1.25, 1), eyeMat); eye.position.set(0.152, 0.01, side * 0.058); eyes.add(eye);
-    const shine = new THREE.Mesh(new THREE.SphereGeometry(0.007, 6, 5), shineMat); shine.position.set(0.164, 0.022, side * 0.054); eyes.add(shine);
-    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.045), eyeMat); brow.position.set(0.155, 0.06, side * 0.06); brow.rotation.x = side * 0.18; head.add(brow);
+    const white = new THREE.Mesh(new THREE.SphereGeometry(0.036, 12, 10).scale(0.45, 1.25, 0.95), eyeWhite); white.position.set(0.15, 0.012, side * 0.06); eyes.add(white);
+    const iris = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 8).scale(0.5, 1.2, 1), irisMat); iris.position.set(0.162, 0.008, side * 0.058); eyes.add(iris);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.013, 8, 6).scale(0.5, 1.2, 1), eyeMat); pupil.position.set(0.172, 0.008, side * 0.058); eyes.add(pupil);
+    const shine = new THREE.Mesh(new THREE.SphereGeometry(0.0075, 6, 5), shineMat); shine.position.set(0.176, 0.024, side * 0.052); eyes.add(shine);
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.016, 0.055), eyeMat); brow.position.set(0.158, 0.068, side * 0.062); brow.rotation.x = side * 0.22; head.add(brow);
+    const cheek = new THREE.Mesh(new THREE.CircleGeometry(0.022, 12).rotateY(Math.PI / 2), cheekMat); cheek.position.set(0.158, -0.042, side * 0.088); cheek.rotation.y = side * 0.5; head.add(cheek);
   }
+  const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.0065, 4, 12, Math.PI), mouthMat);
+  mouth.position.set(0.162, -0.06, 0); mouth.rotation.set(0, Math.PI / 2, Math.PI); head.add(mouth);
   function arm(z) {
     const shoulder = new THREE.Group(); shoulder.position.set(0, 0.52, z); spine.add(shoulder);
-    inked(limbGeometry(0.06, 0.26), shirt, shoulder);
+    inked(limbGeometry(0.062, 0.26), tunic, shoulder);
     const elbow = new THREE.Group(); elbow.position.y = -0.28; shoulder.add(elbow);
-    inked(limbGeometry(0.053, 0.22), skin, elbow);
-    inked(new THREE.TorusGeometry(0.056, 0.016, 6, 16).rotateX(Math.PI / 2), trim, elbow, 0, -0.17, 0);
+    inked(limbGeometry(0.053, 0.22), wrapMat, elbow);
+    inked(new THREE.TorusGeometry(0.058, 0.015, 6, 16).rotateX(Math.PI / 2), trimMat, elbow, 0, -0.18, 0);
+    part('fur', inked(new THREE.TorusGeometry(0.06, 0.03, 6, 16).rotateX(Math.PI / 2), furMat, elbow, 0, 0.0, 0));
     const hand = inked(new THREE.SphereGeometry(0.062, 12, 10).scale(1, 1.1, 0.85), skin, elbow, 0, -0.28, 0);
     return { shoulder, elbow, hand };
   }
   const armR = arm(0.27), armL = arm(-0.27);
   function leg(z) {
     const hip = new THREE.Group(); hip.position.set(0, -0.02, z); pelvis.add(hip);
-    inked(limbGeometry(0.085, 0.33), cloth, hip);
+    inked(limbGeometry(0.088, 0.33), pants, hip);
     const knee = new THREE.Group(); knee.position.y = -0.39; hip.add(knee);
-    inked(limbGeometry(0.074, 0.31), cloth, knee);
+    inked(limbGeometry(0.076, 0.31), pants, knee);
+    inked(new THREE.TorusGeometry(0.07, 0.018, 6, 16).rotateX(Math.PI / 2), wrapMat, knee, 0, -0.27, 0);
     const ankle = new THREE.Group(); ankle.position.y = -0.38; knee.add(ankle);
-    inked(roundedBox(0.25, 0.09, 0.14, 0.04, 2), boots, ankle, 0.05, -0.045, 0);
+    inked(roundedBox(0.26, 0.1, 0.15, 0.045, 2), boots, ankle, 0.05, -0.045, 0);
     return { hip, knee, ankle };
   }
   const legR = leg(0.105), legL = leg(-0.105);
+  function applyOutfit(element) {
+    const o = OUTFITS[element] || OUTFITS[2];
+    tunic.color.copy(lin(o.tunic)); trimMat.color.copy(lin(o.trim)); beltMat.color.copy(lin(o.belt));
+    pants.color.copy(lin(o.pants)); boots.color.copy(lin(o.boots)); wrapMat.color.copy(lin(o.wrap));
+    outfitParts.fur.forEach((m) => { m.visible = !!o.fur; });
+    outfitParts.collar.forEach((m) => { m.visible = !!o.collar; });
+    outfitParts.pads.forEach((m) => { m.visible = !!o.pads; });
+    outfitParts.crown.forEach((m) => { m.visible = !!o.crown; });
+    outfitParts.mantle.forEach((m) => { m.visible = !!o.mantle; });
+    outfitParts.arrow.forEach((m) => { m.visible = !!o.arrow; });
+    outfitParts.hair.forEach((m) => { m.visible = !o.bald; });
+  }
+  applyOutfit(2);
   scene.add(human);
 
   const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpM = new THREE.Matrix4(), tmpS = new THREE.Vector3(), tmpE = new THREE.Euler();
@@ -2134,12 +2241,13 @@ function start() {
   const floats = [];
   const hud = $('hud');
   const lastFloat = {};
-  function floatLabel(text, x, y, z, key) {
+  function floatLabel(text, x, y, z, key, cls) {
     const now = performance.now();
     if (key && now - (lastFloat[key] || 0) < 700) return;
     if (key) lastFloat[key] = now;
     let f = floats.find((e) => e.life <= 0);
-    if (!f) { if (floats.length > 10) return; f = { el: document.createElement('div') }; f.el.className = 'float'; hud.appendChild(f.el); floats.push(f); }
+    if (!f) { if (floats.length > 14) return; f = { el: document.createElement('div') }; hud.appendChild(f.el); floats.push(f); }
+    f.el.className = 'float' + (cls ? ' ' + cls : '');
     f.el.textContent = text;
     f.el.classList.remove('pop');
     void f.el.offsetWidth;
@@ -2173,6 +2281,99 @@ function start() {
       f.el.style.top = y.toFixed(1) + 'px';
       f.el.style.opacity = Math.min(1, f.life * 1.5).toFixed(2);
     }
+  }
+
+  // ---------------------------------------------------------------- Combat feedback: health bars, hits, combos
+  const hpBars = new Map();
+  function stepHealthBars(dt) {
+    const w = canvas.clientWidth, h = canvas.clientHeight, now = uTime.value;
+    const live = new Set();
+    for (const [key, entry] of bodyMeshes) {
+      if (!entry.isDummy) continue;
+      live.add(key);
+      let bar = hpBars.get(key);
+      if (!bar) {
+        const el = document.createElement('div'); el.className = 'hpbar';
+        el.innerHTML = '<b></b><i></i>';
+        hud.appendChild(el);
+        bar = { el, fill: el.querySelector('i'), lag: el.querySelector('b'), shown: 1, lagValue: 1, lastHit: -10 };
+        hpBars.set(key, bar);
+      }
+      if (entry.health < bar.shown - 0.001) bar.lastHit = now;
+      bar.shown = entry.health;
+      bar.lagValue += (entry.health - bar.lagValue) * Math.min(1, dt * (entry.health > bar.lagValue ? 20 : 2.5));
+      const visible = (now - bar.lastHit < 4 || entry.health < 0.999) && !entry.knockedOut && entry.headPos;
+      if (!visible) { bar.el.style.opacity = '0'; continue; }
+      tmpV.copy(entry.headPos).project(camera);
+      const dist = camera.position.distanceTo(entry.headPos);
+      if (tmpV.z > 1 || dist > 40) { bar.el.style.opacity = '0'; continue; }
+      bar.el.style.opacity = '1';
+      bar.el.style.left = ((tmpV.x * 0.5 + 0.5) * w).toFixed(1) + 'px';
+      bar.el.style.top = ((-tmpV.y * 0.5 + 0.5) * h).toFixed(1) + 'px';
+      bar.fill.style.transform = `scaleX(${Math.max(0, entry.health).toFixed(3)})`;
+      bar.lag.style.transform = `scaleX(${Math.max(0, bar.lagValue).toFixed(3)})`;
+    }
+    for (const [key, bar] of hpBars) if (!live.has(key)) { bar.el.remove(); hpBars.delete(key); }
+  }
+  const comboEl = $('combo');
+  const combo = { count: 0, last: -10, damage: 0 };
+  function registerHit(damage, x, y, z) {
+    const now = uTime.value;
+    if (now - combo.last > 2.5) { combo.count = 0; combo.damage = 0; }
+    // Real blows chain a combo; the small ticks of a dummy burning only add to its damage.
+    if (damage >= 5) { combo.count++; combo.last = now; }
+    combo.damage += damage;
+    if (combo.count >= 2 && damage >= 5) {
+      comboEl.querySelector('.count').textContent = 'x' + combo.count;
+      comboEl.querySelector('.label').textContent = `COMBO · ${combo.damage.toFixed(0)} dmg`;
+      comboEl.style.opacity = '1';
+      comboEl.classList.remove('bump'); void comboEl.offsetWidth; comboEl.classList.add('bump');
+    }
+    // Every hit gets its number; heavy ones flash, shake and freeze the action for an instant.
+    const cls = damage >= 45 ? 'dmg huge' : damage >= 18 ? 'dmg big' : 'dmg';
+    floatLabel(damage.toFixed(0), x + rnd() * 0.4, y + 0.2, z + rnd() * 0.4, null, cls);
+    if (damage >= 18) { hitStop = Math.min(0.09, 0.03 + damage * 0.0008); kick(Math.min(0.6, damage / 120)); }
+    let nearest = null, best = 1.5;
+    for (const entry of bodyMeshes.values()) {
+      if (!entry.isDummy || !entry.headPos) continue;
+      const d = Math.hypot(entry.headPos.x - x, entry.headPos.z - z);
+      if (d < best) { best = d; nearest = entry; }
+    }
+    if (nearest) nearest.flash = 0.12;
+  }
+  function stepCombo() {
+    if (uTime.value - combo.last > 2.5 && comboEl.style.opacity !== '0') comboEl.style.opacity = '0';
+  }
+
+  // ---------------------------------------------------------------- Training goals
+  const GOALS = [
+    ['water', 'Draw water from a pond or barrel'], ['douse', 'Put out a fire with water'],
+    ['banner', 'Set a banner alight'], ['lantern', 'Light a lantern'],
+    ['crate', 'Smash a crate'], ['barrel', 'Burst a water barrel'],
+    ['ko', 'Knock out a dummy'], ['firetornado', 'Make a fire tornado'],
+  ];
+  const goalsEl = $('goals');
+  const goalDone = new Set();
+  function renderGoals() {
+    goalsEl.innerHTML = `<div class="head">Training goals · ${goalDone.size}/${GOALS.length}</div>` +
+      GOALS.map(([id, text]) => `<div class="goal${goalDone.has(id) ? ' done' : ''}">${text}</div>`).join('');
+  }
+  renderGoals();
+  const toastEl = $('toast');
+  let toastTimer = 0;
+  function completeGoal(id) {
+    if (goalDone.has(id)) return;
+    goalDone.add(id);
+    renderGoals();
+    const goal = GOALS.find((g) => g[0] === id);
+    toastEl.querySelector('.label').textContent = goalDone.size === GOALS.length ? 'All goals complete!' : `Goal complete · ${goalDone.size}/${GOALS.length}`;
+    toastEl.querySelector('.what').textContent = goal ? goal[1] : '';
+    toastEl.classList.remove('show'); void toastEl.offsetWidth; toastEl.classList.add('show');
+    toastTimer = 3.2;
+  }
+  function stepGoals(dt) {
+    if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) toastEl.classList.remove('show'); }
+    if (player[40] >= 0 && player[45] > 0.2) completeGoal('firetornado');
   }
 
   // ---------------------------------------------------------------- HUD
@@ -2231,8 +2432,7 @@ function start() {
       const pad = document.querySelector(`.pad[data-slot="${slot}"]`);
       if (pad) pad.textContent = t ? (SHORT_NAMES[t.name] || t.name) : '—';
     });
-    shirt.color.copy(lin(ELEMENTS[element].hex)).multiplyScalar(0.78);
-    trim.color.copy(lin(ELEMENTS[element].hex));
+    applyOutfit(element);
     const hex = ELEMENTS[element].hex;
     aimMarker.material.color.copy(lin(hex));
     wallGuide.material.color.copy(lin(hex));
@@ -2242,6 +2442,8 @@ function start() {
   let seenSerial = 0;
   const logItems = [];
   function pushLog(text) {
+    if (text.startsWith('Drew ')) completeGoal('water');
+    if (text.includes('brazier went out')) completeGoal('douse');
     const el = document.createElement('div');
     el.className = 'msg panel';
     el.textContent = text;
@@ -2410,6 +2612,7 @@ function start() {
     requestAnimationFrame(frame);
   }
 
+  let hitStop = 0;
   function tick(dt, now, render = true) {
 
     player = f64(W.sb_player(), 50);
@@ -2426,15 +2629,22 @@ function start() {
     }
     const jump = playing && (keys.has('Space') || jumpHeld || jumpTapped);
     const sprint = playing && (keys.has('ShiftLeft') || keys.has('ShiftRight') || sprintToggle);
-    let buttons = 0;
-    if (playing) for (let s = 0; s < 5; s++) if (slotHeld[s] || slotTapped[s]) buttons |= 1 << (s < 4 ? s : s + 2);
-    slotTapped.fill(false);
-    jumpTapped = false;
-    if (jump) buttons |= 16;
-    if (sprint) buttons |= 32;
-    W.sb_set_input(forward, right, camPos.x, camPos.y, camPos.z, camDir.x, camDir.y, camDir.z, buttons, stanceRequest);
-    stanceRequest = 0;
-    W.sb_advance(dt);
+    // Hit-stop: a heavy blow freezes the action for a few hundredths of a second (presses wait for it).
+    let advanced = false;
+    if (hitStop > 0) {
+      hitStop = Math.max(0, hitStop - dt);
+    } else {
+      advanced = true;
+      let buttons = 0;
+      if (playing) for (let s = 0; s < 5; s++) if (slotHeld[s] || slotTapped[s]) buttons |= 1 << (s < 4 ? s : s + 2);
+      slotTapped.fill(false);
+      jumpTapped = false;
+      if (jump) buttons |= 16;
+      if (sprint) buttons |= 32;
+      W.sb_set_input(forward, right, camPos.x, camPos.y, camPos.z, camDir.x, camDir.y, camDir.z, buttons, stanceRequest);
+      stanceRequest = 0;
+      W.sb_advance(dt);
+    }
 
     player = f64(W.sb_player(), 50);
     P.x = player[0]; P.y = player[1]; P.z = player[2];
@@ -2466,7 +2676,8 @@ function start() {
     updateVolumes(now / 1000, dt);
     updateWhip(dt);
     updateAim();
-    handleEvents();
+    // A frame's events are read once, on the frame the simulation produced them (not again during a hit-stop).
+    if (advanced) handleEvents();
     stepParticles(dt);
     stepDrops(dt);
     flames.step(dt);
@@ -2481,6 +2692,9 @@ function start() {
     updateQuake(dt);
     updateDebris(dt);
     stepFloats(dt);
+    stepHealthBars(dt);
+    stepCombo();
+    stepGoals(dt);
     updateHud();
     stepLog();
 
@@ -2621,6 +2835,9 @@ function start() {
     const whip = player[36] > 0;
     const run = Math.min(speed / 6, 1.3);
     const R = 16;
+    // Secondary motion: the sash tails stream back with speed and bounce with the stride.
+    const swayBack = Math.min(0.95, speed * 0.09) + (grounded ? Math.abs(Math.sin(stride)) * 0.08 * run : 0.3) + Math.sin(t * 2.3) * 0.03;
+    sashTails.rotation.z = -spring('sash', swayBack, 7, dt);
 
     // Landing squash, stance-switch hop, blinking.
     if (grounded && !anim.wasGrounded && anim.fallSpeed < -2.5) anim.land = Math.min(1, -anim.fallSpeed / 9);
@@ -2831,6 +3048,7 @@ function start() {
       const o = k * BODY_STRIDE;
       const kind = b[o], prop = b[o + 1], slot = b[o + 20];
       const burnState = b[o + 21], burnt = b[o + 22], heat = b[o + 23], yaw = b[o + 26], variant = b[o + 27];
+      const health = b[o + 28], knockedOut = b[o + 29] > 0;
       const burning = burnState === 1;
       const key = slot * 4 + kind;
       seen.add(key);
@@ -2932,6 +3150,11 @@ function start() {
         // Tilt about the kernel's X and Y axes; kernel Y is three.js -Z.
         m.rotation.set(b[o + 14], 0, -b[o + 15]);
         charMaterial(m.userData.straw, m.userData.base, burnt, burning, heat, t, slot);
+        // Struck: a white flash.
+        entry.flash = Math.max(0, (entry.flash || 0) - dt);
+        if (entry.flash > 0) m.userData.straw.emissive.setRGB(1, 1, 1).multiplyScalar(entry.flash * 6);
+        entry.health = health; entry.knockedOut = knockedOut; entry.isDummy = true;
+        entry.headPos = (entry.headPos || new THREE.Vector3()).copy(m.position); entry.headPos.y += 1.15;
         if (burning) {
           propFire(m.position.x, m.position.y - 0.1, m.position.z, 0.35, 0.35, 2.6, 0.42, 1.0, dt);
           propFireSpots.push(new THREE.Vector3(m.position.x, m.position.y + 0.44, m.position.z));
@@ -3282,7 +3505,21 @@ function start() {
         kick(0.3);
         for (let i = 0; i < 16; i++) sparks.spawn(x + rnd() * 0.3, y + 0.2, z + rnd() * 0.3, rnd() * 5, Math.random() * 3, rnd() * 5, 0.05, 0.01, 1, 0.5, -2, 1.5, EMBER_SHAPE);
         break;
+      case 10: // a dummy took a hit
+        registerHit(energy, x, y + 0.3, z);
+        break;
+      case 11: // knocked out
+        floatLabel('K.O.!', x, y + 0.9, z, null, 'ko');
+        for (let i = 0; i < 24; i++) sparks.spawn(x, y + 0.4, z, rnd() * 4, 1 + Math.random() * 3, rnd() * 4, 0.05, 0.015, 1, 0.6 + Math.random() * 0.4, -3, 1.5, EMBER_SHAPE);
+        kick(0.4);
+        completeGoal('ko');
+        break;
+      case 12: // back on its feet: a puff of dust
+        for (let i = 0; i < 10; i++) smoke.spawn(x + rnd() * 0.6, y + 0.1, z + rnd() * 0.6, rnd() * 0.8, 0.5 + Math.random() * 0.5, rnd() * 0.8, 0.2, 0.9, 0.3, 0.9 + Math.random() * 0.4, 0.2, 0.6);
+        break;
       case 6: // a prop caught fire: a whoosh of flame and sparks
+        if (detail === PROP.BANNER) completeGoal('banner');
+        if (detail === PROP.LANTERN) completeGoal('lantern');
         if (detail === PROP.LANTERN) { glows.spawn(x, y - 0.55, z, 0, 0, 0, 0.6, 1.4, 0.6, 0.3, 0, 0); floatLabel('Lit!', x, y - 0.1, z, 'lit'); break; }
         glows.spawn(x, y, z, 0, 0, 0, 0.8, 2.6, 0.7, 0.3, 0, 0);
         for (let i = 0; i < 14; i++) flames.spawn(x + rnd() * 0.5, y + rnd() * 0.3, z + rnd() * 0.5, rnd() * 2, 1.5 + Math.random() * 2, rnd() * 2, 0.3 + Math.random() * 0.3, 0.05, 1.0, 0.45 + Math.random() * 0.3, 1.5, 1.5, FLAME_SHAPE);
@@ -3291,6 +3528,7 @@ function start() {
         kick(0.12);
         break;
       case 7: // water put a burning prop out: a hiss of steam
+        completeGoal('douse');
         for (let i = 0; i < 16; i++) steamPuffs.spawn(x + rnd() * 0.6, y + rnd() * 0.4, z + rnd() * 0.6, rnd() * 0.6, 0.8 + Math.random() * 0.8, rnd() * 0.6, 0.2, 1.1, 0.6, 1.4 + Math.random() * 0.8, 0.1, 0.5);
         floatLabel(detail === PROP.LANTERN ? 'Out' : 'Doused!', x, y + 0.6, z, 'douse');
         break;
@@ -3301,6 +3539,7 @@ function start() {
         break;
       case 9: { // smashed: boards fly; a barrel bursts in a sheet of water
         const ground = heightAt(x * 100, -z * 100) / 100;
+        completeGoal(detail === PROP.BARREL ? 'barrel' : 'crate');
         if (detail === PROP.BARREL) {
           spawnDebris(staveGeo, debrisMats.stave, x, ground + 0.3, z, 10, 2.6);
           splash(x, ground + 0.4, z, 90, 3.6, 0.014, true);

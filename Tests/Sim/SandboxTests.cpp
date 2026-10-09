@@ -690,7 +690,48 @@ namespace
 		std::printf("    the dummy caught after %d fire blast%s\n", Blasts, Blasts == 1 ? "" : "s");
 		ExpectTrue("fire blasts set a dummy alight", GSandbox.Bodies[Dummy].Burn.bBurning);
 		Run(LookAt(DummyAt), 13.0);
-		ExpectTrue("it burns down and stands there charred", GSandbox.Bodies[Dummy].bAlive && GSandbox.Bodies[Dummy].Burn.bBurntOut);
+		ExpectTrue("it burns down to char, knocked out", GSandbox.Bodies[Dummy].bAlive && GSandbox.Bodies[Dummy].Burn.bBurntOut && GSandbox.Bodies[Dummy].KnockoutS > 0.0);
+		Run(LookAt(DummyAt), FSandbox::KnockoutSeconds + 0.5);
+		ExpectTrue("then gets up again, whole", GSandbox.Bodies[Dummy].KnockoutS <= 0.0 && !GSandbox.Bodies[Dummy].Burn.bBurntOut);
+	}
+
+
+	void DummiesTakeHitsAndGetUp()
+	{
+		SimTest::Section("Dummies: health, knockout, back on their feet");
+		GSandbox.Init();
+		const int Dummy = FindProp(EArenaProp::Dummy, 0);
+		const FVec3 Home = GSandbox.Bodies[Dummy].LocationCm;
+		Teleport(Home.X - 800.0, Home.Y, 0.0);
+		SetStance(ETechniqueElement::Air);
+		Run(LookAt(Home), 0.4);
+		Press(ETechniqueSlot::Primary, Home, 1.0);
+		const double AfterAir = GSandbox.Bodies[Dummy].Health;
+		std::printf("    an air blast: %.0f damage\n", FSandbox::DummyMaxHealth - AfterAir);
+		ExpectTrue("an air blast hurts a little", AfterAir < FSandbox::DummyMaxHealth && AfterAir > 60.0);
+
+		SetStance(ETechniqueElement::Earth);
+		Run(LookAt(Home), 1.2);
+		Press(ETechniqueSlot::Primary, GSandbox.Bodies[Dummy].LocationCm + FVec3(0.0, 0.0, 30.0), 1.6);
+		ExpectTrue("a thrown rock knocks it out", GSandbox.Bodies[Dummy].KnockoutS > 0.0 && GSandbox.Bodies[Dummy].Health <= 0.0);
+		ExpectTrue("and says so", HasMessage("Dummy knocked out"));
+		const double Tilt = KAbs(GSandbox.Bodies[Dummy].Tilt[0]) + KAbs(GSandbox.Bodies[Dummy].Tilt[1]);
+		ExpectTrue("knocked out, it falls over", Tilt > 1.0);
+		Run(LookAt(Home), FSandbox::KnockoutSeconds + 0.5);
+		const FBody& Back = GSandbox.Bodies[Dummy];
+		ExpectTrue("after a few seconds it stands up again, whole", Back.KnockoutS <= 0.0 && Back.Health == FSandbox::DummyMaxHealth
+			&& Distance(Back.LocationCm, Home) < 400.0);
+
+		// Ice daggers cut: five of them take most of a dummy's health.
+		DrawWhipAtPond();
+		const int Target = FindProp(EArenaProp::Dummy, 1);
+		const FVec3 TargetAt = GSandbox.Bodies[Target].LocationCm;
+		Teleport(TargetAt.X - 450.0, TargetAt.Y, 0.0);
+		Run(LookAt(TargetAt), 0.5);
+		Press(ETechniqueSlot::Signature, TargetAt + FVec3(0.0, 0.0, 20.0), 1.2);
+		const double Cut = FSandbox::DummyMaxHealth - GSandbox.Bodies[Target].Health + (GSandbox.Bodies[Target].KnockoutS > 0.0 ? 100.0 : 0.0);
+		std::printf("    five ice daggers: %.0f damage\n", Cut);
+		ExpectTrue("ice daggers do real damage (> 50)", Cut > 50.0);
 	}
 
 	void FreezeCostsLatentHeat()
@@ -869,6 +910,7 @@ int main(int ArgCount, char** Args)
 	CratesSmashBarrelsBurst();
 	LanternsAndBarrels();
 	DummiesBurnAndChar();
+	DummiesTakeHitsAndGetUp();
 	FreezeCostsLatentHeat();
 	WaterBlastMakesMud();
 	AirThrowsDummiesNotBoulders();

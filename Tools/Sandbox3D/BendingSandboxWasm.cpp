@@ -15,7 +15,7 @@ inline void* operator new(decltype(sizeof(0)), void* Where) noexcept { return Wh
 namespace
 {
 	constexpr int PlayerFields = 50;
-	constexpr int BodyStride = 28;
+	constexpr int BodyStride = 30;
 	constexpr int VolumeStride = 18;
 	constexpr int WhipStride = 6;
 	constexpr int PatchStride = 5;
@@ -183,6 +183,9 @@ SB_EXPORT(sb_pack_bodies) int SbPackBodies()
 		O[25] = B.WaterKg;
 		O[26] = B.YawRad;
 		O[27] = static_cast<double>(B.Variant);
+		// Dummies: health (0..1) and seconds left knocked out.
+		O[28] = B.Health / FSandbox::DummyMaxHealth;
+		O[29] = B.KnockoutS;
 	}
 	return Count;
 }

@@ -266,6 +266,8 @@ namespace BendingSandbox3D
 			Body.YawRad = Placement.YawDeg * Pi / 180.0;
 			Body.Variant = Placement.Variant;
 			Body.WaterKg = Spec.WaterKg;
+			Body.Health = DummyMaxHealth;
+			Body.HomeCm = Volume.LocationCm;
 			// Lanterns stand unlit until a firebender lights them.
 			AddBody(Body, Volume);
 		}
@@ -530,6 +532,7 @@ namespace BendingSandbox3D
 		SyncVolumesOut();
 		UpdateCombustion(Dt);
 		ProcessBreaks();
+		UpdateDummies(Dt);
 		CollectEvents(Dt);
 
 		if (Whip.IsActive() && Whip.ShouldCollapse(World))
@@ -966,11 +969,15 @@ namespace BendingSandbox3D
 			const FVec3 Lift = Side.Cross(AimDirection).GetSafeNormal();
 			const double Spread = Tuning.IceDaggerSpreadDeg * Pi / 180.0;
 			const double Offsets[5][2] = { { 0.0, 0.0 }, { 1.0, 0.25 }, { -1.0, 0.25 }, { 0.5, -0.7 }, { -0.5, -0.7 } };
+			// They leave in a small fan and close on the aim point, landing in a tight group round it.
+			const double AimDistance = KClamp(Distance(Player.AimPointCm, Origin), 200.0, 3000.0);
+			const double Group = 6.0 + AimDistance * (KSin(Spread) / KMax(KCos(Spread), 0.1)) * 0.12;
 			for (int Index = 0; Index < Count; ++Index)
 			{
 				const double* Offset = Offsets[Index % 5];
-				const FVec3 Direction = (AimDirection + Side * (Offset[0] * Spread) + Lift * (Offset[1] * Spread)).GetSafeNormal();
-				const FVec3 Location = Origin + Direction * 25.0 + Side * (Offset[0] * 12.0) + Lift * (Offset[1] * 12.0);
+				const FVec3 Location = Origin + AimDirection * 25.0 + Side * (Offset[0] * 12.0) + Lift * (Offset[1] * 12.0);
+				const FVec3 Target = Origin + AimDirection * AimDistance + Side * (Offset[0] * Group) + Lift * (Offset[1] * Group);
+				const FVec3 Direction = (Target - Location).GetSafeNormal();
 				SpawnProjectile(EProjectileKind::IceShard, MakeIceShard(ShardKg, Location, Direction * MToCm(Tuning.IceDaggerSpeedMs)));
 			}
 			char Text[96];
@@ -1786,8 +1793,22 @@ namespace BendingSandbox3D
 			FVec3 FlameSpot;
 			GetCombustionPoints(Body, Center, FlameSpot);
 			const bool bLantern = Body.Prop == EArenaProp::Lantern;
+			const double HeatBefore = Body.Burn.HeatJ;
+			const ECombustionEvent Event = Body.Burn.Update(World, Spec.Combustion, Center, FlameSpot, Dt);
+			if (Body.Prop == EArenaProp::Dummy)
+			{
+				// Fire hurts a dummy as it heats it (catching takes the rest of its ignition heat), and keeps hurting
+				// while it burns.
+				double Soaked = Event == ECombustionEvent::Ignited ? KMax(Spec.Combustion.IgnitionJ - HeatBefore, 0.0) : KMax(Body.Burn.HeatJ - HeatBefore, 0.0);
+				if (Body.Burn.bBurning && Event != ECombustionEvent::Ignited)
+				{
+					// Already alight, it still feels every other flame that hits it.
+					Soaked += FCombustible::MeasureHeatingW(World, Spec.Combustion, Center, Body.Burn.Flame) * Dt;
+				}
+				DamageBody(Index, Soaked / 2500.0 + (Body.Burn.bBurning ? 7.0 * Dt : 0.0), FVec3());
+			}
 			char Text[96];
-			switch (Body.Burn.Update(World, Spec.Combustion, Center, FlameSpot, Dt))
+			switch (Event)
 			{
 			case ECombustionEvent::Ignited:
 				AddPropEffect(ESandboxEffect::Ignite, Body, FlameSpot, 0.0);
@@ -1829,6 +1850,136 @@ namespace BendingSandbox3D
 			default:
 				break;
 			}
+			if (Body.Prop == EArenaProp::Dummy && Event == ECombustionEvent::BurntOut)
+			{
+				// Burnt down: it lies there charred for a while, then comes back whole.
+				if (Body.KnockoutS > 0.0)
+				{
+					Body.KnockoutS = KnockoutSeconds;
+				}
+				else
+				{
+					DamageBody(Index, Body.Health + 1.0, FVec3());
+				}
+			}
+		}
+	}
+
+	void FSandbox::DamageBody(int Index, double Amount, const FVec3& FromDirection)
+	{
+		if (Index < 0 || Index >= NumBodies || Amount <= 0.0)
+		{
+			return;
+		}
+		FBody& Body = Bodies[Index];
+		if (!Body.bAlive || Body.Kind != EBodyKind::Prop || Body.Prop != EArenaProp::Dummy || Body.KnockoutS > 0.0 || Body.ProtectS > 0.0)
+		{
+			return;
+		}
+		Body.Health -= Amount;
+		Body.FrameDamage += Amount;
+		if (Body.Health > 0.0)
+		{
+			return;
+		}
+		Body.Health = 0.0;
+		Body.KnockoutS = KnockoutSeconds;
+		const FVec3 Flat2(FromDirection.X, FromDirection.Y, 0.0);
+		Body.FallDirection = Flat2.Size() > 1e-6 ? Flat2.GetSafeNormal() : FVec3(1.0, 0.0, 0.0);
+		AddPropEffect(ESandboxEffect::Hit, Body, Body.LocationCm + FVec3(0.0, 0.0, 60.0), Body.PendingDamage + Body.FrameDamage);
+		Body.FrameDamage = 0.0;
+		Body.PendingDamage = 0.0;
+		Body.PendingAgeS = 0.0;
+		AddPropEffect(ESandboxEffect::Knockout, Body, Body.LocationCm + FVec3(0.0, 0.0, 60.0), 0.0);
+		AddMessage("Dummy knocked out!");
+	}
+
+	void FSandbox::UpdateDummies(double Dt)
+	{
+		for (int Index = 0; Index < NumBodies; ++Index)
+		{
+			FBody& Body = Bodies[Index];
+			if (!Body.bAlive || Body.Kind != EBodyKind::Prop || Body.Prop != EArenaProp::Dummy)
+			{
+				continue;
+			}
+			// A blow that lands over several frames is reported as one hit, once it has gone quiet (or every half
+			// second for damage that keeps coming, like burning).
+			if (Body.FrameDamage > 0.0)
+			{
+				Body.PendingDamage += Body.FrameDamage;
+				Body.FrameDamage = 0.0;
+				Body.QuietS = 0.0;
+			}
+			else
+			{
+				Body.QuietS += Dt;
+			}
+			if (Body.PendingDamage > 0.0)
+			{
+				Body.PendingAgeS += Dt;
+				if (Body.QuietS >= 0.12 || Body.PendingAgeS >= 0.5)
+				{
+					if (Body.PendingDamage >= 1.0)
+					{
+						AddPropEffect(ESandboxEffect::Hit, Body, Body.LocationCm + FVec3(0.0, 0.0, 60.0), Body.PendingDamage);
+					}
+					Body.PendingDamage = 0.0;
+					Body.PendingAgeS = 0.0;
+				}
+			}
+			Body.ProtectS = KMax(Body.ProtectS - Dt, 0.0);
+			if (Body.KnockoutS <= 0.0)
+			{
+				continue;
+			}
+			// Still burning, it stays down until the fire is out (or burnt through).
+			Body.KnockoutS = Body.Burn.bBurning ? KMax(Body.KnockoutS - Dt, 1.0) : Body.KnockoutS - Dt;
+			if (Body.KnockoutS > 0.0)
+			{
+				continue;
+			}
+			// Back on its feet where it first stood, whole again (unburnt, full health).
+			Body.KnockoutS = 0.0;
+			Body.Health = DummyMaxHealth;
+			Body.FrameDamage = 0.0;
+			Body.PendingDamage = 0.0;
+			Body.PendingAgeS = 0.0;
+			Body.Burn.RemoveFlame(World);
+			Body.Burn = FCombustible();
+			// Where it first stood, or the nearest clear spot (a rock may have come to rest there).
+			FVec3 Spot = Body.HomeCm;
+			for (int Ring = 0; Ring <= 4; ++Ring)
+			{
+				bool bFound = false;
+				for (int Step = 0; Step < (Ring == 0 ? 1 : 8) && !bFound; ++Step)
+				{
+					const double Angle = Step * Pi / 4.0;
+					const FVec3 Try = Body.HomeCm + FVec3(KCos(Angle), KSin(Angle), 0.0) * (Ring * 90.0);
+					bool bClear = true;
+					for (int Other = 0; Other < NumBodies && bClear; ++Other)
+					{
+						const FBody& O = Bodies[Other];
+						bClear = Other == Index || !O.bAlive || Distance(FVec3(O.LocationCm.X, O.LocationCm.Y, 0.0), FVec3(Try.X, Try.Y, 0.0)) > O.RadiusCm + Body.RadiusCm + 20.0;
+					}
+					if (bClear)
+					{
+						Spot = Try;
+						Spot.Z = Terrain.GetHeightAt(Try.X, Try.Y) + (Body.HomeCm.Z - Terrain.GetHeightAt(Body.HomeCm.X, Body.HomeCm.Y));
+						bFound = true;
+					}
+				}
+				if (bFound)
+				{
+					break;
+				}
+			}
+			Body.LocationCm = Spot;
+			Body.VelocityCmS = FVec3();
+			Body.ProtectS = 1.5;
+			Body.Tilt[0] = Body.Tilt[1] = 0.0;
+			Body.TiltRate[0] = Body.TiltRate[1] = 0.0;
+			AddPropEffect(ESandboxEffect::Respawn, Body, Body.HomeCm, 0.0);
 		}
 	}
 
@@ -2020,6 +2171,8 @@ namespace BendingSandbox3D
 					{
 						// It strikes and shatters: its momentum goes into what it hit.
 						PushBody(BodyIndex, Projectile.VelocityCmS * MassKg);
+						// A blade of ice does more than its momentum.
+						DamageBody(BodyIndex, 15.0, Projectile.VelocityCmS);
 						bHit = true;
 					}
 				}
@@ -2094,11 +2247,12 @@ namespace BendingSandbox3D
 			}
 			if (Body.Prop == EArenaProp::Dummy)
 			{
-				// Weighted base: the dummy rocks back upright.
+				// Weighted base: the dummy rocks back upright; knocked out, it topples over the way it was hit.
+				const double Target[2] = { Body.KnockoutS > 0.0 ? -Body.FallDirection.Y * 1.45 : 0.0, Body.KnockoutS > 0.0 ? Body.FallDirection.X * 1.45 : 0.0 };
 				for (int Axis = 0; Axis < 2; ++Axis)
 				{
-					Body.TiltRate[Axis] += (-40.0 * Body.Tilt[Axis] - 4.0 * Body.TiltRate[Axis]) * Dt;
-					Body.Tilt[Axis] = KClamp(Body.Tilt[Axis] + Body.TiltRate[Axis] * Dt, -1.2, 1.2);
+					Body.TiltRate[Axis] += (-40.0 * (Body.Tilt[Axis] - Target[Axis]) - (Body.KnockoutS > 0.0 ? 9.0 : 4.0) * Body.TiltRate[Axis]) * Dt;
+					Body.Tilt[Axis] = KClamp(Body.Tilt[Axis] + Body.TiltRate[Axis] * Dt, -1.5, 1.5);
 				}
 			}
 			if (Body.bStatic || Body.bHeld || (Body.Prop == EArenaProp::Brazier && Body.Kind == EBodyKind::Prop))
@@ -2220,11 +2374,13 @@ namespace BendingSandbox3D
 					{
 						A.TiltRate[0] -= Normal.Y * Impulse * InvA * 0.01;
 						A.TiltRate[1] += Normal.X * Impulse * InvA * 0.01;
+						DamageBody(I, DamagePerMs * CmToM(Impulse * InvA), Normal * -1.0);
 					}
 					if (B.Prop == EArenaProp::Dummy)
 					{
 						B.TiltRate[0] += Normal.Y * Impulse * InvB * 0.01;
 						B.TiltRate[1] -= Normal.X * Impulse * InvB * 0.01;
+						DamageBody(J, DamagePerMs * CmToM(Impulse * InvB), Normal);
 					}
 				}
 			}
@@ -2235,6 +2391,18 @@ namespace BendingSandbox3D
 			FBody& Body = Bodies[Index];
 			if (Body.bAlive && !Terrain.IsInside(Body.LocationCm.X, Body.LocationCm.Y))
 			{
+				if (Body.Kind == EBodyKind::Prop && Body.Prop == EArenaProp::Dummy)
+				{
+					// Flung off the field: it lies at the edge, out, until it gets back up where it stood.
+					Body.LocationCm = FVec3(KClamp(Body.LocationCm.X, Layout.OriginCm.X + 50.0, -Layout.OriginCm.X - 50.0),
+						KClamp(Body.LocationCm.Y, Layout.OriginCm.Y + 50.0, -Layout.OriginCm.Y - 50.0), Body.LocationCm.Z);
+					Body.VelocityCmS = FVec3();
+					if (Body.KnockoutS <= 0.0)
+					{
+						DamageBody(Index, Body.Health + 1.0, FVec3(1.0, 0.0, 0.0));
+					}
+					continue;
+				}
 				RemoveBody(Index);
 			}
 		}
@@ -2296,9 +2464,10 @@ namespace BendingSandbox3D
 				}
 				if (Body.Prop == EArenaProp::Dummy)
 				{
-					// Pushed high on its body, the dummy rocks.
+					// Pushed high on its body, the dummy rocks; struck, it takes damage.
 					Body.TiltRate[0] -= DeltaV.Y * 0.02;
 					Body.TiltRate[1] += DeltaV.X * 0.02;
+					DamageBody(Index, DamagePerMs * CmToM(DeltaV.Size()), DeltaV);
 				}
 			}
 			if (Body.Prop == EArenaProp::IceBlock && Volume->Substance == ESubstance::Water)

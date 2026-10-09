@@ -83,6 +83,19 @@ namespace BendingSandbox3D
 		int Variant = 0;
 		/** Hit hard enough to smash this frame. */
 		bool bBreakPending = false;
+		/** Training dummies: health, damage taken this frame (reported as one hit), time left knocked out. */
+		double Health = 100.0;
+		double FrameDamage = 0.0;
+		/** Damage gathered into one hit: a blow lands over several frames (a blast heats, a rock shoves). */
+		double PendingDamage = 0.0;
+		double PendingAgeS = 0.0;
+		double QuietS = 0.0;
+		double KnockoutS = 0.0;
+		/** Just back up: cannot be hurt for this long. */
+		double ProtectS = 0.0;
+		/** Which way it fell (unit, horizontal) and where it stands again when it gets back up. */
+		FVec3 FallDirection;
+		FVec3 HomeCm;
 	};
 
 	enum class EProjectileKind : unsigned char
@@ -184,7 +197,13 @@ namespace BendingSandbox3D
 		/** A prop burnt away (MassKg: its EArenaProp). */
 		BurntOut,
 		/** A prop smashed (MassKg: its EArenaProp; EnergyJ: water it spilled, kg). */
-		Smash
+		Smash,
+		/** A dummy took damage (EnergyJ: damage this frame). */
+		Hit,
+		/** A dummy's health ran out: it falls over. */
+		Knockout,
+		/** A knocked-out dummy stands up again, whole. */
+		Respawn
 	};
 
 	/** Earthbending in progress (wall rising, rock lifting). */
@@ -324,6 +343,16 @@ namespace BendingSandbox3D
 		void AddPropEffect(ESandboxEffect Effect, const FBody& Body, const FVec3& LocationCm, double EnergyJ);
 		/** A barrel within reach holding enough water for a whip, or -1. */
 		int FindWaterBarrel(const FVec3& FromCm, double MinWaterKg, FVec3& OutSourceCm) const;
+	public:
+		static constexpr double DummyMaxHealth = 100.0;
+		/** Damage from a hit, per m/s it changes a dummy's speed. */
+		static constexpr double DamagePerMs = 15.0;
+		static constexpr double KnockoutSeconds = 6.0;
+		/** Damages a training dummy (others ignore it); FromDirection is the way the blow travelled. */
+		void DamageBody(int Index, double Amount, const FVec3& FromDirection);
+	private:
+		/** Reports the frame's damage as hits, and stands knocked-out dummies back up. */
+		void UpdateDummies(double Dt);
 		/** Ground flame fed by the current hold. */
 		int HoldProjectile = -1;
 		/** Where Raise / Lower Ground works, fixed when the hold starts. */
