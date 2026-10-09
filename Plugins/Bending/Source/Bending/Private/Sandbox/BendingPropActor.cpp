@@ -486,10 +486,10 @@ void ABendingPropActor::HandleSubstanceChanged(EElementalSubstance OldSubstance,
 	// Fully melted: the water runs into the soil (mud) and the block is gone.
 	bMelted = true;
 	FElementalVolumeState State;
-	const double WaterKg = Volume->GetSimulatedState(State) ? State.MassKg : SoilMassKg;
+	const double MeltWaterKg = Volume->GetSimulatedState(State) ? State.MassKg : SoilMassKg;
 	if (UBendingInteractionSubsystem* Interaction = GetWorld()->GetSubsystem<UBendingInteractionSubsystem>())
 	{
-		Interaction->DepositWaterOnSurface(GroundCm, WaterKg, GetSoilPorosity());
+		Interaction->DepositWaterOnSurface(GroundCm, MeltWaterKg, GetSoilPorosity());
 	}
 	Destroy();
 }

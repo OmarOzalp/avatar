@@ -312,7 +312,11 @@ void UBendingTechniqueComponent::BeginWaterWhip()
 	ABendingWaterWhipActor* NewWhip = GetWorld()->SpawnActor<ABendingWaterWhipActor>(ABendingWaterWhipActor::StaticClass(), FTransform(HandLocation), Params);
 	if (!NewWhip || !NewWhip->InitWhip(this, BendingUnits::ToEngine(Source), WaterKg, UBendingSettings::Get().AmbientTemperatureK))
 	{
-		if (Pond >= 0)
+		if (Barrel)
+		{
+			Barrel->ReturnWater(WaterKg);
+		}
+		else if (Pond >= 0)
 		{
 			Arena->ReturnPondWater(Pond, WaterKg);
 		}

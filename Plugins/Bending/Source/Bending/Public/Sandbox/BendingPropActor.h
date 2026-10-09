@@ -72,6 +72,8 @@ public:
 	/** Water barrels: water left, and taking some (a waterbender's whip); returns what was taken. */
 	double GetWaterKg() const { return WaterKg; }
 	double TakeWater(double MassKg);
+	/** Puts back water that was taken (a whip that could not form). */
+	void ReturnWater(double MassKg) { WaterKg += FMath::Max(MassKg, 0.0); }
 
 	/** Smashes a crate or barrel next frame: boards fly, a barrel's water spills, a burning crate drops its fire. */
 	void RequestSmash() { bSmashPending = true; }
